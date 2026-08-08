@@ -14,7 +14,7 @@
 - 保留五个标准角色：`CUSTOMER`、`COURIER`、`STATION_OPERATOR`、`OPERATIONS_ADMIN` 和 `SYSTEM_ADMIN`。
 - 揽收和派送是任务类型，不是角色；始发和目标是网点数据范围，不是角色。
 - 每个改变状态的接口都必须校验 JWT 身份、资源范围、当前状态和 `Idempotency-Key` 请求头。
-- 时间戳以带时区的 UTC 值存储，前端统一按 `Asia/Shanghai` 展示。
+- 统一业务时区为 `Asia/Shanghai`（UTC+08:00）。API 时间必须带 `+08:00` 偏移，PostgreSQL 使用 `timestamptz` 且连接会话时区设为 `Asia/Shanghai`；禁止无时区时间进入业务模型。
 - 电话和地址只使用演示数据；客户可见轨迹和普通日志中的电话必须脱敏。
 - 第一阶段一张运单只对应一个实体包裹。
 - 源码标识符使用 ASCII，API 错误码使用英文；客户可见的 Vue 文案使用简体中文。
@@ -40,6 +40,7 @@
 │   │   ├── main.py
 │   │   ├── config.py
 │   │   ├── database.py
+│   │   ├── clock.py
 │   │   ├── errors.py
 │   │   ├── idempotency.py
 │   │   ├── identity/
@@ -71,7 +72,6 @@
 │   │   │   └── service.py
 │   │   └── demo/
 │   │       ├── seed.py
-│   │       ├── clock.py
 │   │       └── router.py
 │   └── tests/
 │       ├── conftest.py
@@ -117,8 +117,10 @@
 - 新建：`backend/pyproject.toml`
 - 新建：`backend/src/yitu/config.py`
 - 新建：`backend/src/yitu/database.py`
+- 新建：`backend/src/yitu/clock.py`
 - 新建：`backend/src/yitu/main.py`
 - 新建：`backend/tests/api/test_health.py`
+- 新建：`backend/tests/test_clock.py`
 - 新建：`frontend/package.json`
 - 新建：`frontend/src/main.ts`
 - 新建：`frontend/src/App.vue`
@@ -126,6 +128,7 @@
 **接口：**
 - 产出：`create_app() -> FastAPI`
 - 产出：SQLAlchemy `Base`、异步 `SessionFactory` 和 `get_session()` 依赖。
+- 产出：统一返回 `Asia/Shanghai` 时间的 `Clock.now() -> datetime` 和 `to_business_timezone(value) -> datetime`。
 - 产出：`GET /api/health -> {"status": "ok"}`
 - 产出：Compose 中名为 `db` 的 PostgreSQL 服务和名为 `api` 的 API 服务。
 
@@ -147,11 +150,27 @@ async def test_health_reports_ok() -> None:
     assert response.json() == {"status": "ok"}
 ```
 
+同时在 `backend/tests/test_clock.py` 编写东八区契约测试：
+
+```python
+from datetime import UTC, datetime, timedelta
+
+from yitu.clock import Clock, to_business_timezone
+
+
+def test_clock_and_conversion_use_china_standard_time() -> None:
+    now = Clock().now()
+    converted = to_business_timezone(datetime(2026, 8, 9, 0, 0, tzinfo=UTC))
+
+    assert now.utcoffset() == timedelta(hours=8)
+    assert converted.isoformat() == "2026-08-09T08:00:00+08:00"
+```
+
 - [ ] **步骤 2：运行测试并确认预期失败**
 
-运行：`cd backend; uv run pytest tests/api/test_health.py -q`
+运行：`cd backend; uv run pytest tests/api/test_health.py tests/test_clock.py -q`
 
-预期：测试收集失败，因为 `yitu.main` 尚不存在。
+预期：测试收集失败，因为 `yitu.main` 和 `yitu.clock` 尚不存在。
 
 - [ ] **步骤 3：添加最小 FastAPI 应用和项目元数据**
 
@@ -174,7 +193,9 @@ app = create_app()
 
 在 `pyproject.toml` 中配置 Python 3.11、FastAPI、SQLAlchemy 异步模式、asyncpg、Alembic、Pydantic Settings、PyJWT、Argon2、pytest、pytest-asyncio、HTTPX、Ruff 和 mypy。让 Ruff 与 mypy 检查 `backend/src` 和 `backend/tests`。
 
-在 `database.py` 中定义声明式 `Base`、异步引擎、`SessionFactory` 和事务安全的 FastAPI `get_session` 依赖。测试使用 PostgreSQL 测试事务覆盖 `get_session`；各领域模块必须导入共享 `Base`，不能自行创建元数据。
+在 `database.py` 中定义声明式 `Base`、异步引擎、`SessionFactory` 和事务安全的 FastAPI `get_session` 依赖。建立连接时执行 `SET TIME ZONE 'Asia/Shanghai'`。测试使用 PostgreSQL 测试事务覆盖 `get_session`；各领域模块必须导入共享 `Base`，不能自行创建元数据。
+
+在 `clock.py` 中使用 `ZoneInfo("Asia/Shanghai")` 提供唯一的业务当前时间入口和时区转换函数。Pydantic 请求模型拒绝无 `tzinfo` 的时间；响应通过共享序列化基类统一输出带 `+08:00` 的 RFC 3339 字符串。测试通过依赖覆盖注入固定东八区时钟。
 
 - [ ] **步骤 4：添加 Vue/Vite 外壳和 Docker Compose 服务**
 
@@ -182,9 +203,9 @@ app = create_app()
 
 - [ ] **步骤 5：验证基础工程**
 
-运行：`cd backend; uv run ruff check .; uv run mypy src; uv run pytest tests/api/test_health.py -q`
+运行：`cd backend; uv run ruff check .; uv run mypy src; uv run pytest tests/api/test_health.py tests/test_clock.py -q`
 
-预期：所有命令通过，健康检查测试显示 `1 passed`。
+预期：所有命令通过，健康检查与东八区时间测试均通过。
 
 运行：`cd frontend; npm install; npm run build`
 
@@ -750,7 +771,7 @@ git commit -m "feat: add role-based logistics workflow UI"
 ## 任务 10：确定性演示数据、重置与交付文档
 
 **文件：**
-- 新建：`backend/src/yitu/demo/clock.py`
+- 修改：`backend/src/yitu/clock.py`
 - 新建：`backend/src/yitu/demo/seed.py`
 - 新建：`backend/src/yitu/demo/router.py`
 - 新建：`backend/tests/journeys/test_demo_reset.py`
@@ -762,7 +783,7 @@ git commit -m "feat: add role-based logistics workflow UI"
 **接口：**
 - 产出：七个固定演示身份键。
 - 产出：`POST /api/demo/reset`，仅在 `APP_PROFILE=demo` 时启用，并且只有 `SYSTEM_ADMIN` 可以调用。
-- 产出：可注入的 `Clock.now() -> datetime`。
+- 使用并扩展：任务 1 的 `Clock.now() -> datetime`，在演示配置中支持受控推进。
 
 - [ ] **步骤 1：编写重置范围与可重复性测试**
 
@@ -783,7 +804,7 @@ async def test_demo_reset_is_repeatable_and_scoped(api, database):
 
 运行：`cd backend; uv run pytest tests/journeys/test_demo_reset.py -q`
 
-预期：测试失败，因为演示重置、带范围的种子数据和可注入时钟尚不存在。
+预期：测试失败，因为演示重置、带范围的种子数据和可受控推进的演示时钟尚不存在。
 
 - [ ] **步骤 3：实现确定性种子数据**
 
