@@ -9,6 +9,7 @@ from sqlalchemy.engine import RowMapping
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from yitu.platform.clock import Clock
+from yitu.platform.errors import AppError
 
 
 class RetryPolicy:
@@ -64,6 +65,55 @@ class OutboxService:
                 "next_attempt_at": created_at,
                 "created_at": created_at,
             },
+        )
+        return event_id
+
+
+class DeadLetterService:
+    """恢复已经修复失败原因的数据库死信任务。"""
+
+    def __init__(self, session: AsyncSession, *, clock: Clock | None = None) -> None:
+        self._session = session
+        self._clock = clock or Clock()
+
+    async def replay(self, dead_letter_id: UUID) -> UUID:
+        """把原事件恢复为待投递状态，并保留原幂等键。"""
+        dead_letter = (
+            await self._session.execute(
+                text(
+                    "SELECT event_id, replayed_at FROM dead_letters "
+                    "WHERE id = :dead_letter_id FOR UPDATE"
+                ),
+                {"dead_letter_id": dead_letter_id},
+            )
+        ).mappings().one_or_none()
+        if dead_letter is None:
+            raise LookupError(f"死信记录不存在: {dead_letter_id}")
+        if dead_letter["replayed_at"] is not None:
+            raise AppError(
+                code="DEAD_LETTER_ALREADY_REPLAYED",
+                message="死信任务已经重放",
+                status_code=409,
+            )
+
+        event_id = dead_letter["event_id"]
+        if not isinstance(event_id, UUID):
+            raise TypeError("死信记录的事件 ID 类型无效")
+        now = self._clock.now()
+        await self._session.execute(
+            text(
+                "UPDATE outbox_events SET status = 'pending', attempts = 0, "
+                "next_attempt_at = :now, last_error = NULL, processed_at = NULL "
+                "WHERE id = :event_id AND status = 'dead'"
+            ),
+            {"event_id": event_id, "now": now},
+        )
+        await self._session.execute(
+            text(
+                "UPDATE dead_letters SET replayed_at = :now "
+                "WHERE id = :dead_letter_id"
+            ),
+            {"dead_letter_id": dead_letter_id, "now": now},
         )
         return event_id
 
