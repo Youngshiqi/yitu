@@ -5,6 +5,91 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 from yitu.platform.database import SessionFactory
+from yitu.platform.errors import AppError
+from yitu.platform.idempotency import (
+    IdempotencyResponse,
+    IdempotencyService,
+    canonical_json_sha256,
+)
+
+
+def test_canonical_json_sha256_ignores_object_key_order() -> None:
+    first_hash = canonical_json_sha256({"name": "张三", "items": [1, 2]})
+    second_hash = canonical_json_sha256({"items": [1, 2], "name": "张三"})
+
+    assert first_hash == second_hash
+    assert first_hash == "ab09aef14fcd29f2d396cb15c6c95a3003aba0e8c3a68381fc6dac4af05b2c62"
+
+
+async def test_idempotency_service_replays_stored_response_without_reexecuting() -> None:
+    scope = f"replay-scope-{uuid4()}"
+    key = f"create-shipment-{uuid4()}"
+    request_hash = canonical_json_sha256({"shipment_no": "YT-001"})
+    operation_call_count = 0
+
+    async def first_operation() -> IdempotencyResponse:
+        nonlocal operation_call_count
+        operation_call_count += 1
+        return IdempotencyResponse(
+            status_code=201,
+            body={"shipment_id": "shipment-001", "status": "created"},
+        )
+
+    async with SessionFactory() as session:
+        service = IdempotencyService(session)
+        response = await service.execute(scope, key, request_hash, first_operation)
+        await session.commit()
+
+    async def replay_operation() -> IdempotencyResponse:
+        raise AssertionError("重放请求不应再次执行操作")
+
+    async with SessionFactory() as session:
+        replay_response = await IdempotencyService(session).execute(
+            scope,
+            key,
+            request_hash,
+            replay_operation,
+        )
+
+    assert response == IdempotencyResponse(
+        status_code=201,
+        body={"shipment_id": "shipment-001", "status": "created"},
+    )
+    assert replay_response == response
+    assert operation_call_count == 1
+
+
+async def test_idempotency_service_rejects_key_reused_with_different_request() -> None:
+    scope = f"conflict-scope-{uuid4()}"
+    key = f"create-shipment-{uuid4()}"
+
+    async def first_operation() -> IdempotencyResponse:
+        return IdempotencyResponse(status_code=201, body={"shipment_id": "shipment-001"})
+
+    async with SessionFactory() as session:
+        await IdempotencyService(session).execute(
+            scope,
+            key,
+            canonical_json_sha256({"shipment_no": "YT-001"}),
+            first_operation,
+        )
+        await session.commit()
+
+    async def conflicting_operation() -> IdempotencyResponse:
+        raise AssertionError("键冲突请求不应执行操作")
+
+    async with SessionFactory() as session:
+        with pytest.raises(AppError) as error_info:
+            await IdempotencyService(session).execute(
+                scope,
+                key,
+                canonical_json_sha256({"shipment_no": "YT-002"}),
+                conflicting_operation,
+            )
+
+    assert error_info.value.code == "IDEMPOTENCY_KEY_REUSED"
+    assert error_info.value.status_code == 409
+    assert error_info.value.message == "幂等键已用于不同的请求"
 
 
 async def test_idempotency_records_has_required_postgresql_columns() -> None:
