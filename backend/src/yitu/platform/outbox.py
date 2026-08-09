@@ -1,8 +1,9 @@
 import json
+from collections.abc import Awaitable, Callable
 from uuid import UUID, uuid4
 
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from yitu.platform.clock import Clock
 
@@ -50,3 +51,36 @@ class OutboxService:
             },
         )
         return event_id
+
+
+async def relay_pending_events(
+    session_factory: async_sessionmaker[AsyncSession],
+    publish: Callable[[UUID], Awaitable[None]],
+    *,
+    limit: int = 100,
+    clock: Clock | None = None,
+) -> int:
+    """领取并发布已经到期的待投递事件。"""
+    now = (clock or Clock()).now()
+    async with session_factory() as session, session.begin():
+        event_ids = (
+            await session.execute(
+                text(
+                    "SELECT id FROM outbox_events "
+                    "WHERE status = 'pending' AND next_attempt_at <= :now "
+                    "ORDER BY next_attempt_at, created_at "
+                    "FOR UPDATE SKIP LOCKED LIMIT :limit"
+                ),
+                {"now": now, "limit": limit},
+            )
+        ).scalars().all()
+        for event_id in event_ids:
+            await publish(event_id)
+            await session.execute(
+                text(
+                    "UPDATE outbox_events SET status = 'published' "
+                    "WHERE id = :event_id"
+                ),
+                {"event_id": event_id},
+            )
+    return len(event_ids)
