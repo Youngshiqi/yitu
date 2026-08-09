@@ -1,3 +1,5 @@
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from uuid import uuid4
 
 from fastapi import FastAPI, Request
@@ -6,7 +8,9 @@ from pydantic import BaseModel
 from starlette.middleware.base import RequestResponseEndpoint
 
 from yitu.platform.config import get_settings
+from yitu.platform.database import dispose_database
 from yitu.platform.errors import AppError
+from yitu.platform.readiness import check_readiness
 from yitu.platform.schemas import ErrorResponse
 
 
@@ -16,10 +20,23 @@ class HealthResponse(BaseModel):
     status: str
 
 
+class ReadinessResponse(BaseModel):
+    """就绪检查响应。"""
+
+    status: str
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    """在应用退出前主动释放异步数据库连接。"""
+    yield
+    await dispose_database()
+
+
 def create_app() -> FastAPI:
     """创建并配置 Yitu API 应用。"""
     settings = get_settings()
-    app = FastAPI(title=settings.app_name, version="0.1.0")
+    app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
 
     @app.middleware("http")
     async def attach_request_id(
@@ -49,5 +66,18 @@ def create_app() -> FastAPI:
     @app.get("/api/v1/health", response_model=HealthResponse, tags=["system"])
     async def health() -> HealthResponse:
         return HealthResponse(status="ok")
+
+    @app.get("/api/v1/readiness", response_model=ReadinessResponse, tags=["system"])
+    async def readiness() -> ReadinessResponse:
+        try:
+            await check_readiness()
+        # 就绪接口只返回稳定错误契约，具体连接异常保留在异常链中。
+        except Exception as error:
+            raise AppError(
+                code="SERVICE_NOT_READY",
+                message="服务尚未就绪",
+                status_code=503,
+            ) from error
+        return ReadinessResponse(status="ready")
 
     return app
