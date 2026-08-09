@@ -174,43 +174,119 @@ git add backend
 git commit -m "feat: add idempotency and audit foundations"
 ```
 
-### Task 5: Outbox, Celery, and Dead Letters
+### Task 5：可靠异步任务基础
 
-**Files:**
-- Create: `backend/src/yitu/platform/outbox.py`
-- Create: `backend/src/yitu/platform/tasks.py`
-- Create: `backend/src/yitu/worker.py`
-- Create: `backend/migrations/versions/0003_create_outbox_and_dead_letters.py`
-- Create: `backend/tests/platform/test_outbox.py`
-- Create: `backend/tests/platform/test_worker_recovery.py`
+Task 5 拆成 7 个可独立验收的小任务。整个 Task 5 最多新增 5 个核心行为测试，不逐列测试数据库结构，也不测试 Celery 框架本身。
 
-**Interfaces:**
-- Produces: `OutboxService.append()`, `relay_pending_events()`, `consume_once()`, `DeadLetterService.replay()`
+#### Task 5.1：Outbox 与死信数据库迁移
 
-- [ ] **Step 1: Write failing reliability tests**
+**文件：**
+- 新建：`backend/migrations/versions/0003_create_outbox_and_dead_letters.py`
 
-Assert event and aggregate rollback together, duplicate delivery changes observable state once, five failures create a dead letter, and replay preserves the original idempotency key.
+**产出：**
+- `outbox_events`：保存 `id`、`event_type`、`business_id`、`payload`、`idempotency_key`、`status`、`attempts`、`next_attempt_at`、`last_error`、`created_at`、`processed_at`
+- `dead_letters`：保存原事件 ID、任务类型、业务 ID、载荷、原幂等键、尝试次数、最后错误、失败时间、重放时间和处理建议
 
-- [ ] **Step 2: Verify red**
+- [ ] 编写 `0003` 迁移，前置版本固定为 `0002`；时间列使用 `timestamptz`，载荷使用 `JSONB`。
+- [ ] 执行 `cd backend; uv run alembic upgrade head`，确认当前版本为 `0003`。
+- [ ] 执行 `uv run alembic downgrade 0002; uv run alembic upgrade head`，确认迁移可以往返。
+- [ ] 不新增逐列结构测试；后续真实写入行为会覆盖表结构。
+- [ ] 提交：`功能：新增 Outbox 与死信数据表`
 
-Run: `cd backend; uv run pytest tests/platform/test_outbox.py tests/platform/test_worker_recovery.py -q`
-Expected: missing outbox and worker modules.
+#### Task 5.2：事务内追加 Outbox 事件
 
-- [ ] **Step 3: Implement durable task state**
+**文件：**
+- 新建：`backend/src/yitu/platform/outbox.py`
+- 新建或修改：`backend/tests/platform/test_outbox.py`
 
-Persist event ID, type, payload, attempts, next attempt and status in PostgreSQL. Configure Celery with Redis but keep delivery state in PostgreSQL; apply exponential backoff, jitter and a five-attempt dead-letter transition.
+**接口：**
+- `OutboxService(session, clock).append(event_type, business_id, payload, idempotency_key) -> UUID`
 
-- [ ] **Step 4: Verify green**
+- [ ] 只写 1 个失败测试：在同一事务写入业务探针和 Outbox 事件，随后主动抛错，验证二者一起回滚。
+- [ ] 实现 `append()`；只执行插入，不自行 `commit`，初始状态为 `pending`、尝试次数为 `0`。
+- [ ] 运行该聚焦测试并确认通过。
+- [ ] 提交：`功能：支持事务内追加 Outbox 事件`
 
-Run: `cd backend; uv run alembic upgrade head; uv run pytest tests/platform/test_outbox.py tests/platform/test_worker_recovery.py -q`
-Expected: all tests pass without a real cloud dependency.
+#### Task 5.3：投递到期事件
 
-- [ ] **Step 5: Commit**
+**文件：**
+- 修改：`backend/src/yitu/platform/outbox.py`
+- 修改：`backend/tests/platform/test_outbox.py`
 
-```bash
-git add backend
-git commit -m "feat: add durable outbox processing"
-```
+**接口：**
+- `relay_pending_events(session_factory, publish, limit=100) -> int`
+- `publish(event_id: UUID) -> Awaitable[None]`
+
+- [ ] 只写 1 个失败测试：仅投递状态为 `pending` 且 `next_attempt_at` 已到期的事件；未来事件不得投递。
+- [ ] 使用 PostgreSQL `FOR UPDATE SKIP LOCKED` 领取事件，发布成功后改为 `published`。
+- [ ] 发布失败时保留为 `pending`，不得丢失数据库事件。
+- [ ] 运行聚焦测试并确认通过。
+- [ ] 提交：`功能：新增 Outbox 到期事件中继`
+
+#### Task 5.4：幂等消费单个事件
+
+**文件：**
+- 修改：`backend/src/yitu/platform/outbox.py`
+- 新建：`backend/tests/platform/test_worker_recovery.py`
+
+**接口：**
+- `consume_once(session, event_id, handler) -> bool`
+- `handler(payload, idempotency_key) -> Awaitable[None]`
+
+- [ ] 只写 1 个并发失败测试：重复投递同一事件时，可观察业务副作用只能发生一次。
+- [ ] 使用数据库行锁仲裁；已完成事件直接返回 `False`，首次成功消费返回 `True`。
+- [ ] handler 与事件状态更新处于同一调用方事务，服务不得自行提交。
+- [ ] 运行并发测试 3 次；三次均通过即可，不做 10 次循环。
+- [ ] 提交：`功能：确保 Outbox 事件幂等消费`
+
+#### Task 5.5：五次失败后进入死信
+
+**文件：**
+- 修改：`backend/src/yitu/platform/outbox.py`
+- 修改：`backend/tests/platform/test_worker_recovery.py`
+
+**接口：**
+- `RetryPolicy.next_attempt(attempts, now, jitter) -> datetime`
+
+- [ ] 只写 1 个失败测试：handler 连续失败 5 次后，事件状态变为 `dead`，并产生一条数据库死信记录。
+- [ ] 每次 handler 失败使用嵌套事务回滚业务副作用，同时保留失败次数。
+- [ ] 第 1–4 次失败设置指数退避与随机抖动；基础延迟 30 秒，最长 30 分钟，抖动范围 0–10%。
+- [ ] 第 5 次失败保存最后错误和处理建议，不再自动投递。
+- [ ] 运行聚焦测试并确认通过。
+- [ ] 提交：`功能：新增异步任务重试与死信处理`
+
+#### Task 5.6：管理员安全重放死信
+
+**文件：**
+- 修改：`backend/src/yitu/platform/outbox.py`
+- 修改：`backend/tests/platform/test_worker_recovery.py`
+
+**接口：**
+- `DeadLetterService(session, clock).replay(dead_letter_id) -> UUID`
+
+- [ ] 只写 1 个失败测试：重放后原 Outbox 事件恢复为 `pending`，原 `idempotency_key` 保持不变，死信记录写入 `replayed_at`。
+- [ ] 重放同一死信第二次时返回明确冲突，不重复创建事件。
+- [ ] 运行聚焦测试并确认通过。
+- [ ] 提交：`功能：支持安全重放死信任务`
+
+#### Task 5.7：Celery 与 Redis Worker 接线
+
+**文件：**
+- 新建：`backend/src/yitu/platform/tasks.py`
+- 新建：`backend/src/yitu/worker.py`
+- 修改：`backend/src/yitu/platform/config.py`
+- 修改：`backend/pyproject.toml`
+- 修改：`backend/uv.lock`
+
+**接口：**
+- Celery 应用：`yitu.worker.celery_app`
+- 任务：`relay_outbox`、`consume_outbox_event(event_id)`
+
+- [ ] 新增 `YITU_REDIS_URL` 配置；Redis 只作为 Celery broker/backend，可靠状态继续保存在 PostgreSQL。
+- [ ] `relay_outbox` 调用 `relay_pending_events()`；`consume_outbox_event` 调用 `consume_once()`。
+- [ ] 不为 Celery 框架编写单元测试；运行导入检查：`uv run python -c "from yitu.worker import celery_app; print(celery_app.main)"`。
+- [ ] 运行 Task 5 的最多 5 个核心行为测试，再运行一次 Ruff、mypy 和全量 pytest。
+- [ ] 提交：`功能：接入 Celery 与 Redis 后台任务`
 
 ### Task 6: Docker Compose and Phase Gate
 
