@@ -29,7 +29,7 @@ def canonical_json_sha256(payload: object) -> str:
 
 
 class IdempotencyService:
-    """在调用方事务内保存并顺序重放幂等请求的响应快照。"""
+    """在调用方事务内仲裁并重放幂等请求的响应快照。"""
 
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
@@ -42,10 +42,22 @@ class IdempotencyService:
         operation: Callable[[], Awaitable[IdempotencyResponse]],
     ) -> IdempotencyResponse:
         """执行首次请求，或为相同请求哈希返回已保存的响应。"""
+        # 事务锁先于查询获取，等待者会在获锁后看到竞争者已提交的记录。
+        await self._session.execute(
+            text(
+                "SELECT pg_advisory_xact_lock("
+                "hashtextextended("
+                "jsonb_build_array(CAST(:scope AS TEXT), CAST(:key AS TEXT))::text, "
+                "0"
+                ")"
+                ")"
+            ),
+            {"scope": scope, "key": key},
+        )
         existing_record = (
             await self._session.execute(
                 text(
-                    "SELECT request_hash, response_status, response_body "
+                    "SELECT request_hash, status, response_status, response_body "
                     "FROM idempotency_records "
                     "WHERE scope = :scope AND key = :key"
                 ),
@@ -54,6 +66,10 @@ class IdempotencyService:
         ).mappings().one_or_none()
 
         if existing_record is not None:
+            status = existing_record["status"]
+            if status != "completed":
+                raise RuntimeError(f"幂等记录状态异常: {status}")
+
             if existing_record["request_hash"] != request_hash:
                 raise AppError(
                     code="IDEMPOTENCY_KEY_REUSED",
@@ -62,11 +78,12 @@ class IdempotencyService:
                 )
 
             response_status = existing_record["response_status"]
-            if not isinstance(response_status, int):
-                raise RuntimeError("已完成的幂等记录缺少响应状态码")
+            response_body = existing_record["response_body"]
+            if not isinstance(response_status, int) or response_body is None:
+                raise RuntimeError("已完成的幂等记录响应不完整")
             return IdempotencyResponse(
                 status_code=response_status,
-                body=existing_record["response_body"],
+                body=response_body,
             )
 
         response = await operation()

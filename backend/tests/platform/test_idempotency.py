@@ -1,3 +1,4 @@
+import asyncio
 from uuid import uuid4
 
 import pytest
@@ -90,6 +91,196 @@ async def test_idempotency_service_rejects_key_reused_with_different_request() -
     assert error_info.value.code == "IDEMPOTENCY_KEY_REUSED"
     assert error_info.value.status_code == 409
     assert error_info.value.message == "幂等键已用于不同的请求"
+
+
+async def test_idempotency_service_executes_concurrent_same_request_once() -> None:
+    scope = f"concurrent-replay-scope-{uuid4()}"
+    key = f"create-shipment-{uuid4()}"
+    request_hash = canonical_json_sha256({"shipment_no": "YT-001"})
+    expected_response = IdempotencyResponse(
+        status_code=201,
+        body={"shipment_id": "shipment-001", "status": "created"},
+    )
+    entry_barrier = asyncio.Barrier(2)
+    operation_call_count = 0
+
+    async def operation() -> IdempotencyResponse:
+        nonlocal operation_call_count
+        operation_call_count += 1
+        await asyncio.sleep(0.05)
+        return expected_response
+
+    async def invoke() -> IdempotencyResponse:
+        async with SessionFactory() as session, session.begin():
+            await session.execute(text("SELECT 1"))
+            await entry_barrier.wait()
+            return await IdempotencyService(session).execute(
+                scope,
+                key,
+                request_hash,
+                operation,
+            )
+
+    results = await asyncio.gather(invoke(), invoke(), return_exceptions=True)
+
+    async with SessionFactory() as session:
+        record_count = await session.scalar(
+            text(
+                "SELECT COUNT(*) FROM idempotency_records "
+                "WHERE scope = :scope AND key = :key"
+            ),
+            {"scope": scope, "key": key},
+        )
+
+    assert operation_call_count == 1
+    assert all(result == expected_response for result in results)
+    assert record_count == 1
+
+
+async def test_idempotency_service_rejects_concurrent_different_request_hash() -> None:
+    scope = f"concurrent-conflict-scope-{uuid4()}"
+    key = f"create-shipment-{uuid4()}"
+    entry_barrier = asyncio.Barrier(2)
+    operation_call_count = 0
+    expected_outcomes = [
+        (
+            canonical_json_sha256({"shipment_no": "YT-001"}),
+            IdempotencyResponse(
+                status_code=201,
+                body={"shipment_no": "YT-001", "status": "created"},
+            ),
+        ),
+        (
+            canonical_json_sha256({"shipment_no": "YT-002"}),
+            IdempotencyResponse(
+                status_code=201,
+                body={"shipment_no": "YT-002", "status": "created"},
+            ),
+        ),
+    ]
+
+    async def invoke(shipment_no: str) -> IdempotencyResponse:
+        request_hash = canonical_json_sha256({"shipment_no": shipment_no})
+
+        async def operation() -> IdempotencyResponse:
+            nonlocal operation_call_count
+            operation_call_count += 1
+            await asyncio.sleep(0.05)
+            return IdempotencyResponse(
+                status_code=201,
+                body={"shipment_no": shipment_no, "status": "created"},
+            )
+
+        async with SessionFactory() as session, session.begin():
+            await session.execute(text("SELECT 1"))
+            await entry_barrier.wait()
+            return await IdempotencyService(session).execute(
+                scope,
+                key,
+                request_hash,
+                operation,
+            )
+
+    results = await asyncio.gather(
+        invoke("YT-001"),
+        invoke("YT-002"),
+        return_exceptions=True,
+    )
+    successful_responses = [
+        result for result in results if isinstance(result, IdempotencyResponse)
+    ]
+    errors = [result for result in results if isinstance(result, AppError)]
+
+    async with SessionFactory() as session:
+        records = (
+            await session.execute(
+                text(
+                    "SELECT request_hash, response_status, response_body "
+                    "FROM idempotency_records "
+                    "WHERE scope = :scope AND key = :key"
+                ),
+                {"scope": scope, "key": key},
+            )
+        ).mappings().all()
+
+    assert operation_call_count == 1
+    assert len(successful_responses) == 1
+    assert len(errors) == 1
+    assert errors[0].code == "IDEMPOTENCY_KEY_REUSED"
+    assert errors[0].status_code == 409
+    assert len(records) == 1
+    assert (records[0]["request_hash"], successful_responses[0]) in expected_outcomes
+    assert records[0]["response_status"] == successful_responses[0].status_code
+    assert records[0]["response_body"] == successful_responses[0].body
+
+
+async def test_idempotency_service_rejects_record_with_unexpected_status() -> None:
+    scope = f"unexpected-status-scope-{uuid4()}"
+    key = f"create-shipment-{uuid4()}"
+    request_hash = canonical_json_sha256({"shipment_no": "YT-001"})
+
+    async with SessionFactory() as session, session.begin():
+        await session.execute(
+            text(
+                "INSERT INTO idempotency_records ("
+                "scope, key, request_hash, status, response_status, response_body, "
+                "created_at, updated_at"
+                ") VALUES ("
+                ":scope, :key, :request_hash, 'processing', 202, "
+                "CAST(:response_body AS JSONB), CURRENT_TIMESTAMP, CURRENT_TIMESTAMP"
+                ")"
+            ),
+            {
+                "scope": scope,
+                "key": key,
+                "request_hash": request_hash,
+                "response_body": '{"status":"processing"}',
+            },
+        )
+
+    async def operation() -> IdempotencyResponse:
+        raise AssertionError("异常状态记录不应重新执行操作")
+
+    async with SessionFactory() as session:
+        with pytest.raises(RuntimeError, match="幂等记录状态异常: processing"):
+            await IdempotencyService(session).execute(
+                scope,
+                key,
+                request_hash,
+                operation,
+            )
+
+
+async def test_idempotency_service_rejects_completed_record_without_body() -> None:
+    scope = f"incomplete-response-scope-{uuid4()}"
+    key = f"create-shipment-{uuid4()}"
+    request_hash = canonical_json_sha256({"shipment_no": "YT-001"})
+
+    async with SessionFactory() as session, session.begin():
+        await session.execute(
+            text(
+                "INSERT INTO idempotency_records ("
+                "scope, key, request_hash, status, response_status, response_body, "
+                "created_at, updated_at"
+                ") VALUES ("
+                ":scope, :key, :request_hash, 'completed', 201, NULL, "
+                "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP"
+                ")"
+            ),
+            {"scope": scope, "key": key, "request_hash": request_hash},
+        )
+
+    async def operation() -> IdempotencyResponse:
+        raise AssertionError("响应不完整的记录不应重新执行操作")
+
+    async with SessionFactory() as session:
+        with pytest.raises(RuntimeError, match="已完成的幂等记录响应不完整"):
+            await IdempotencyService(session).execute(
+                scope,
+                key,
+                request_hash,
+                operation,
+            )
 
 
 async def test_idempotency_records_has_required_postgresql_columns() -> None:
