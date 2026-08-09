@@ -1,14 +1,14 @@
-# Yitu Backend Phase 4 Knowledge and RAG Implementation Plan
+# 驿途后端阶段四：知识库与 RAG 实施计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **供智能体开发者使用：** 必须使用 `superpowers:subagent-driven-development`（推荐）或 `superpowers:executing-plans`，按照本计划逐项实施。步骤使用复选框（`- [ ]`）跟踪进度。
 
-**Goal:** 通过管理员 HTTP API 完成 PDF 安全上传、异步解析、人工预览、版本发布、中文混合检索和页码引用。
+**目标：** 通过管理员 HTTP API 完成 PDF 安全上传、异步解析、人工预览、版本发布、中文混合检索和页码引用。
 
-**Architecture:** `BlobStore` 隔离文件存储；Celery Worker 执行 MinerU/PyMuPDF、切片和索引；PostgreSQL 保存工作流事实、全文索引和 pgvector，只有已发布版本可检索。
+**架构：** `BlobStore` 隔离文件存储；Celery Worker 执行 MinerU/PyMuPDF、切片和索引；PostgreSQL 保存工作流事实、全文索引和 pgvector，只有已发布版本可检索。
 
-**Tech Stack:** MinerU、PyMuPDF、jieba、PostgreSQL tsvector/GIN、pgvector、Celery、Docker Volume。
+**技术栈：** MinerU、PyMuPDF、jieba、PostgreSQL tsvector/GIN、pgvector、Celery、Docker 卷。
 
-## Global Constraints
+## 全局约束
 
 - `OPERATIONS_ADMIN` 与 `SYSTEM_ADMIN` 可管理文档生命周期；只有 `SYSTEM_ADMIN` 可改解析/Embedding/索引配置和重放死信。
 - 原始文件不存数据库；文件名不得成为存储路径；未发布内容不得进入 Agent 检索。
@@ -16,74 +16,74 @@
 
 ---
 
-### Task 1: BlobStore and Safe PDF Upload
+### 任务 1：BlobStore 与安全 PDF 上传
 
-**Files:** Create `backend/src/yitu/knowledge/{blob_store,models,schemas,service,router}.py`; migration `0016`; tests `backend/tests/knowledge/test_upload.py`; modify Compose volumes.
+**文件：** 新建 `backend/src/yitu/knowledge/{blob_store,models,schemas,service,router}.py`；迁移 `0016`；测试 `backend/tests/knowledge/test_upload.py`；修改 Compose 卷配置。
 
-**Interfaces:** Produces `BlobStore.put/open/delete`, `POST /api/v1/knowledge/documents`, document status API.
+**接口：** 产出 `BlobStore.put/open/delete`、`POST /api/v1/knowledge/documents` 和文档状态 API。
 
-- [ ] Test streaming upload, PDF header/MIME/size/page/encryption checks, SHA-256 dedupe, path traversal and role matrix.
-- [ ] Run knowledge upload tests; expect missing module.
-- [ ] Implement local-volume BlobStore with generated object keys and metadata-only database rows.
-- [ ] Run migration and upload tests; expect all pass.
-- [ ] Commit `feat: add secure knowledge uploads`.
+- [ ] 测试流式上传、PDF 文件头/MIME/大小/页数/加密检查、SHA-256 去重、路径穿越和角色矩阵。
+- [ ] 运行知识库上传测试；预期因缺少模块而失败。
+- [ ] 实现使用生成对象键的本地卷 BlobStore，数据库只保存元数据行。
+- [ ] 运行迁移和上传测试；预期全部通过。
+- [ ] 提交：`功能：新增安全知识库上传`。
 
-### Task 2: Parser Worker and Durable Status Machine
+### 任务 2：解析 Worker 与持久状态机
 
-**Files:** Create `backend/src/yitu/knowledge/{parsers,tasks,state_machine}.py`; migration `0017`; tests `backend/tests/knowledge/test_parsing.py`.
+**文件：** 新建 `backend/src/yitu/knowledge/{parsers,tasks,state_machine}.py`；迁移 `0017`；测试 `backend/tests/knowledge/test_parsing.py`。
 
-**Interfaces:** Produces `MinerUParser`, `PyMuPDFParser`, `parse_document(document_id)`, statuses `UPLOADED/QUEUED/PARSING/REVIEW_REQUIRED/PARSE_FAILED`.
+**接口：** 产出 `MinerUParser`、`PyMuPDFParser`、`parse_document(document_id)`，以及状态 `UPLOADED/QUEUED/PARSING/REVIEW_REQUIRED/PARSE_FAILED`。
 
-- [ ] Test text, scan fixture, corrupt file, timeout, five retries, fallback warning and Worker restart recovery.
-- [ ] Run parser tests with fixed parser adapters; expect missing parser contracts.
-- [ ] Implement subprocess/container boundary, resource limits, structured parse artifacts and PyMuPDF text-only fallback.
-- [ ] Run parser tests; run one explicitly approved local MinerU smoke fixture; expect review-required result.
-- [ ] Commit `feat: parse PDF knowledge asynchronously`.
+- [ ] 测试文本 PDF、扫描件夹具、损坏文件、超时、五次重试、降级警告和 Worker 重启恢复。
+- [ ] 使用固定解析适配器运行解析测试；预期因缺少解析契约而失败。
+- [ ] 实现子进程/容器边界、资源限制、结构化解析产物和 PyMuPDF 纯文本降级方案。
+- [ ] 运行解析测试；经用户明确同意后运行一次本地 MinerU 冒烟夹具；预期得到待审核结果。
+- [ ] 提交：`功能：异步解析 PDF 知识文档`。
 
-### Task 3: Chunking, Versioned Embeddings, and Index Build
+### 任务 3：切片、版本化向量与索引构建
 
-**Files:** Create `backend/src/yitu/knowledge/{chunking,embedding,indexing}.py`; migration `0018`; tests `backend/tests/knowledge/test_chunking.py`, `test_indexing.py`.
+**文件：** 新建 `backend/src/yitu/knowledge/{chunking,embedding,indexing}.py`；迁移 `0018`；测试 `backend/tests/knowledge/test_chunking.py`、`test_indexing.py`。
 
-**Interfaces:** Produces `ChunkingPolicy.chunk()`, `EmbeddingProvider.embed()`, `build_index_version()`.
+**接口：** 产出 `ChunkingPolicy.chunk()`、`EmbeddingProvider.embed()`、`build_index_version()`。
 
-- [ ] Test heading/table boundaries, 500–800 Chinese-character split, page/coordinates, header cleanup, vector dimension and mixed-version rejection.
-- [ ] Run chunk/index tests; expect missing policies.
-- [ ] Implement deterministic chunker, fixed embedding adapter for CI, jieba tokens, tsvector and separate vector index versions.
-- [ ] Run migration and tests; expect all pass.
-- [ ] Commit `feat: build versioned knowledge indexes`.
+- [ ] 测试标题/表格边界、500–800 个中文字符切分、页码/坐标、页眉清理、向量维度和混合版本拒绝。
+- [ ] 运行切片/索引测试；预期因缺少策略而失败。
+- [ ] 实现确定性切片器、供 CI 使用的固定向量适配器、jieba 分词、tsvector 和独立的向量索引版本。
+- [ ] 运行迁移和测试；预期全部通过。
+- [ ] 提交：`功能：构建版本化知识索引`。
 
-### Task 4: Preview, Review, Publish, Archive, and Reparse APIs
+### 任务 4：预览、审核、发布、归档与重新解析 API
 
-**Files:** Modify knowledge service/router/schemas; tests `backend/tests/knowledge/test_review_publish.py`.
+**文件：** 修改知识库服务、路由和模式；测试 `backend/tests/knowledge/test_review_publish.py`。
 
-**Interfaces:** Produces preview/artifact routes and `review`, `publish`, `archive`, `deactivate`, `reparse` actions.
+**接口：** 产出预览/产物路由，以及 `review`、`publish`、`archive`、`deactivate`、`reparse` 动作。
 
-- [ ] Test both admin roles, system-only config mutation, required reviewer, atomic new-version switch, failed-new-version fallback and audit records.
-- [ ] Run review tests; expect missing actions.
-- [ ] Implement explicit lifecycle commands; never publish automatically after parsing/indexing.
-- [ ] Run tests; expect all pass.
-- [ ] Commit `feat: add reviewed knowledge publishing`.
+- [ ] 测试两种管理员角色、仅系统管理员可修改配置、必须指定审核人、新版本原子切换、新版本失败降级和审计记录。
+- [ ] 运行审核测试；预期因缺少动作而失败。
+- [ ] 实现显式生命周期命令；解析或索引后绝不自动发布。
+- [ ] 运行测试；预期全部通过。
+- [ ] 提交：`功能：新增审核后知识发布`。
 
-### Task 5: Hybrid Retrieval and Verifiable Citations
+### 任务 5：混合检索与可验证引用
 
-**Files:** Create `backend/src/yitu/knowledge/retrieval.py`; create query routes; tests `backend/tests/knowledge/test_retrieval.py`.
+**文件：** 新建 `backend/src/yitu/knowledge/retrieval.py`；新建查询路由；测试 `backend/tests/knowledge/test_retrieval.py`。
 
-**Interfaces:** Produces `KnowledgeRetriever.search(query, filters, limit) -> list[Evidence]`; evidence includes document/version/title/page/coordinates/snippet/scores.
+**接口：** 产出 `KnowledgeRetriever.search(query, filters, limit) -> list[Evidence]`；证据包含文档、版本、标题、页码、坐标、片段和分数。
 
-- [ ] Test Chinese keywords, synonyms, semantic questions, role/effective-date filters, unpublished exclusion and evidence-poor refusal signal.
-- [ ] Run retrieval tests; expect missing retriever.
-- [ ] Implement normalized keyword/vector weighted fusion and stable score breakdown; reserve an injected reranker without enabling it.
-- [ ] Run retrieval tests; expect all quality fixtures meet recorded thresholds.
-- [ ] Commit `feat: add cited hybrid knowledge retrieval`.
+- [ ] 测试中文关键词、同义词、语义问题、角色/生效日期过滤、排除未发布内容和证据不足拒答信号。
+- [ ] 运行检索测试；预期因缺少检索器而失败。
+- [ ] 实现归一化关键词/向量加权融合和稳定的分数组成；预留可注入重排器但暂不启用。
+- [ ] 运行检索测试；预期所有质量夹具达到记录阈值。
+- [ ] 提交：`功能：新增带引用的混合知识检索`。
 
-### Task 6: RAG Phase Gate
+### 任务 6：RAG 阶段验收
 
-**Files:** Create `backend/tests/journeys/test_knowledge_pipeline.py`; add test PDF fixtures and README knowledge section.
+**文件：** 新建 `backend/tests/journeys/test_knowledge_pipeline.py`；添加测试 PDF 夹具和 README 知识库章节。
 
-**Interfaces:** Produces HTTP-only upload-to-citation journey.
+**接口：** 产出从上传到引用的纯 HTTP 旅程。
 
-- [ ] Test upload → parse → preview → publish → retrieve, old-version service continuity, injection document isolation and correct citation page.
-- [ ] Run `cd backend; uv run ruff check .; uv run mypy src; uv run pytest tests/knowledge tests/journeys/test_knowledge_pipeline.py -q`.
-- [ ] Run migration round-trip and Compose Worker recovery test; expect all pass.
-- [ ] Record parser/index versions and fixture hashes in the test report.
-- [ ] Commit `test: verify managed RAG pipeline`.
+- [ ] 测试上传 → 解析 → 预览 → 发布 → 检索、旧版本服务连续性、注入文档隔离和正确引用页码。
+- [ ] 运行 `cd backend; uv run ruff check .; uv run mypy src; uv run pytest tests/knowledge tests/journeys/test_knowledge_pipeline.py -q`。
+- [ ] 运行迁移往返和 Compose Worker 恢复测试；预期全部通过。
+- [ ] 在测试报告中记录解析器/索引版本和夹具哈希。
+- [ ] 提交：`测试：验证受管理的 RAG 流程`。

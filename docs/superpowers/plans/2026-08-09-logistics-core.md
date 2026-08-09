@@ -1,4 +1,4 @@
-# Yitu 物流核心实施计划
+# 驿途物流核心实施计划
 
 > **历史计划：** 本文件已由 `2026-08-09-backend-roadmap.md` 及六份 `backend-phase-*` 计划取代，不再作为执行入口。保留本文件仅用于追溯早期物流核心设计。
 
@@ -217,7 +217,7 @@ app = create_app()
 
 ```bash
 git add .gitattributes .gitignore .env.example compose.yaml CONTEXT.md backend frontend
-git commit -m "chore: scaffold yitu application"
+git commit -m "工程：搭建驿途应用基础结构"
 ```
 
 ## 任务 2：网点与确定性服务区域匹配
@@ -292,7 +292,7 @@ class ServiceArea(Base):
 
 ```bash
 git add backend/src/yitu/stations backend/tests/stations backend/migrations backend/src/yitu/main.py
-git commit -m "feat: add station service-area resolution"
+git commit -m "功能：新增网点服务区域匹配"
 ```
 
 ## 任务 3：五角色身份体系与安全演示登录
@@ -371,7 +371,7 @@ class TokenClaims(BaseModel):
 
 ```bash
 git add backend/src/yitu/identity backend/tests/identity backend/migrations backend/src/yitu/main.py
-git commit -m "feat: add scoped demo authentication"
+git commit -m "功能：新增范围受控的演示认证"
 ```
 
 ## 任务 4：运单聚合、状态机与创建流程
@@ -455,7 +455,7 @@ class ShipmentStatus(StrEnum):
 
 ```bash
 git add backend/src/yitu/shipments backend/src/yitu/tracking backend/tests/shipments backend/migrations backend/src/yitu/main.py
-git commit -m "feat: create shipments with explicit state transitions"
+git commit -m "功能：通过显式状态转换创建运单"
 ```
 
 ## 任务 5：上门揽收、网点自寄与始发网点交接
@@ -527,7 +527,7 @@ stmt = (
 
 ```bash
 git add backend/src/yitu/dispatch backend/src/yitu/shipments backend/tests/dispatch backend/tests/shipments backend/migrations backend/src/yitu/main.py
-git commit -m "feat: fulfill pickup and station dropoff"
+git commit -m "功能：完成上门揽收与网点自寄"
 ```
 
 ## 任务 6：模拟干线与目标网点到站
@@ -582,7 +582,7 @@ async def test_arrival_selects_last_mile_path(
 
 ```bash
 git add backend/src/yitu/shipments backend/tests/shipments/test_linehaul.py backend/migrations
-git commit -m "feat: simulate linehaul destination arrival"
+git commit -m "功能：模拟干线目标网点到站"
 ```
 
 ## 任务 7：送货上门、网点自取与签收凭证
@@ -641,7 +641,7 @@ async def test_station_pickup_locks_after_five_failures(api):
 
 ```bash
 git add backend/src/yitu/shipments backend/src/yitu/dispatch backend/tests/shipments/test_last_mile.py backend/migrations
-git commit -m "feat: complete delivery and station pickup"
+git commit -m "功能：完成派送与网点自取"
 ```
 
 ## 任务 8：四种服务组合的 API 旅程测试
@@ -697,7 +697,7 @@ async def test_complete_service_combination(
 
 ```bash
 git add backend/tests
-git commit -m "test: cover logistics service journeys"
+git commit -m "测试：覆盖物流服务旅程"
 ```
 
 ## 任务 9：Vue 角色外壳与核心流程页面
@@ -767,7 +767,7 @@ test('customer can follow a shipment through all demo roles', async ({ page }) =
 
 ```bash
 git add frontend
-git commit -m "feat: add role-based logistics workflow UI"
+git commit -m "功能：新增基于角色的物流流程界面"
 ```
 
 ## 任务 10：确定性演示数据、重置与交付文档
@@ -830,7 +830,7 @@ README 必须包含前置条件、环境变量、`docker compose up --build`、�
 
 ```bash
 git add backend/src/yitu/demo backend/tests/journeys/test_demo_reset.py backend/src/yitu/main.py compose.yaml .env.example README.md
-git commit -m "feat: add repeatable logistics demo scenario"
+git commit -m "功能：新增可重复的物流演示场景"
 ```
 
 ---

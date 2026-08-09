@@ -1,14 +1,14 @@
-# Yitu Backend Phase 5 AI Agent Implementation Plan
+# 驿途后端阶段五：AI Agent 实施计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **供智能体开发者使用：** 必须使用 `superpowers:subagent-driven-development`（推荐）或 `superpowers:executing-plans`，按照本计划逐项实施。步骤使用复选框（`- [ ]`）跟踪进度。
 
-**Goal:** 交付可恢复、可追踪和受控的 LangGraph Agent，支持对话下单、业务查询、RAG 引用、一次性写授权、记忆与安全评测。
+**目标：** 交付可恢复、可追踪和受控的 LangGraph Agent，支持对话下单、业务查询、RAG 引用、一次性写授权、记忆与安全评测。
 
-**Architecture:** LangGraph 只管理会话编排；工具调用既有应用服务；数据库保存会话、授权和审计；云模型通过可替换 OpenAI-compatible 适配器接入，CI 使用固定模型。
+**架构：** LangGraph 只管理会话编排；工具调用既有应用服务；数据库保存会话、授权和审计；云模型通过可替换的 OpenAI 兼容适配器接入，CI 使用固定模型。
 
-**Tech Stack:** LangGraph、OpenAI-compatible API、SSE、PostgreSQL/pgvector、Redis、pytest 固定模型适配器。
+**技术栈：** LangGraph、OpenAI 兼容 API、SSE、PostgreSQL/pgvector、Redis、pytest 固定模型适配器。
 
-## Global Constraints
+## 全局约束
 
 - 开始在线验证前，明确指导用户选择供应商、创建 API Key、写入 `.env` 并确认费用；不得要求在聊天粘贴密钥。
 - 每个图节点、非直观路由和安全边界提供中文 docstring/注释。
@@ -16,86 +16,86 @@
 
 ---
 
-### Task 1: Model Adapter, Conversation Persistence, and SSE
+### 任务 1：模型适配器、会话持久化与 SSE
 
-**Files:** Create `backend/src/yitu/agent/{models,schemas,model_adapter,service,router,sse}.py`; migration `0019`; tests `backend/tests/agent/test_conversations.py`.
+**文件：** 新建 `backend/src/yitu/agent/{models,schemas,model_adapter,service,router,sse}.py`；迁移 `0019`；测试 `backend/tests/agent/test_conversations.py`。
 
-**Interfaces:** Produces `ModelAdapter.complete/stream`, `FixedModelAdapter`, conversation/message routes and SSE event schema.
+**接口：** 产出 `ModelAdapter.complete/stream`、`FixedModelAdapter`、会话/消息路由和 SSE 事件模式。
 
-- [ ] Test user isolation, resume after restart, SSE event IDs/reconnect, timeout and no-key degradation.
-- [ ] Run agent conversation tests; expect missing module.
-- [ ] Implement persisted messages/tool envelopes, injected adapter and bounded SSE; never log full secrets/prompts by default.
-- [ ] Run migration and tests with fixed adapter; expect all pass without network.
-- [ ] Commit `feat: add persistent agent conversations`.
+- [ ] 测试用户隔离、重启后恢复、SSE 事件 ID/重连、超时和无密钥降级。
+- [ ] 运行 Agent 会话测试；预期因缺少模块而失败。
+- [ ] 实现持久化消息/工具信封、注入式适配器和有界 SSE；默认不得记录完整密钥或提示词。
+- [ ] 使用固定适配器运行迁移和测试；预期无需联网即可全部通过。
+- [ ] 提交：`功能：新增持久化 Agent 会话`。
 
-### Task 2: LangGraph State and Safe Routing
+### 任务 2：LangGraph 状态与安全路由
 
-**Files:** Create `backend/src/yitu/agent/{graph,state,nodes,prompts}.py`; tests `backend/tests/agent/test_graph_routing.py`.
+**文件：** 新建 `backend/src/yitu/agent/{graph,state,nodes,prompts}.py`；测试 `backend/tests/agent/test_graph_routing.py`。
 
-**Interfaces:** Produces `AgentState`, `build_agent_graph()`, named nodes for context, intent/risk, RAG, query tool, draft, confirmation and response.
+**接口：** 产出 `AgentState`、`build_agent_graph()`，以及上下文、意图/风险、RAG、查询工具、草稿、确认和响应命名节点。
 
-- [ ] Test route selection for public rule, own shipment, other customer, draft update, sensitive action and prompt injection.
-- [ ] Run graph tests; expect missing graph.
-- [ ] Implement typed state and nodes with Chinese docstrings; enforce maximum rounds, timeout and tool budget in deterministic routing guards.
-- [ ] Run graph tests; expect all pass.
-- [ ] Commit `feat: define controlled LangGraph workflow`.
+- [ ] 测试公开规则、本人运单、其他客户、草稿更新、敏感动作和提示词注入的路由选择。
+- [ ] 运行图测试；预期因缺少图而失败。
+- [ ] 使用中文 docstring 实现类型化状态和节点；在确定性路由守卫中限制最大轮数、超时和工具预算。
+- [ ] 运行图测试；预期全部通过。
+- [ ] 提交：`功能：定义受控 LangGraph 工作流`。
 
-### Task 3: Read Tools and RAG Tool
+### 任务 3：只读工具与 RAG 工具
 
-**Files:** Create `backend/src/yitu/agent/tools/{base,shipments,pricing,knowledge}.py`; tests `backend/tests/agent/test_read_tools.py`.
+**文件：** 新建 `backend/src/yitu/agent/tools/{base,shipments,pricing,knowledge}.py`；测试 `backend/tests/agent/test_read_tools.py`。
 
-**Interfaces:** Produces strict Pydantic tools for own profile/address, shipment/tracking/fee/ETA query and knowledge search.
+**接口：** 产出严格的 Pydantic 工具，用于查询本人资料/地址、运单/轨迹/费用/ETA 和检索知识库。
 
-- [ ] Test JWT-derived identity, cross-user refusal, exact DTOs, citation preservation and no-evidence response.
-- [ ] Run read-tool tests; expect missing tools.
-- [ ] Implement adapters that call application services/retriever and return only minimum model-safe fields.
-- [ ] Run tests; expect all pass.
-- [ ] Commit `feat: add scoped agent read tools`.
+- [ ] 测试从 JWT 获取身份、拒绝跨用户访问、精确 DTO、保留引用和无证据响应。
+- [ ] 运行只读工具测试；预期因缺少工具而失败。
+- [ ] 实现调用应用服务/检索器的适配器，只返回模型所需的最少安全字段。
+- [ ] 运行测试；预期全部通过。
+- [ ] 提交：`功能：新增范围受控的 Agent 只读工具`。
 
-### Task 4: ShipmentDraft and Dual-Entry Shared Creation
+### 任务 4：运单草稿与双入口共享创建
 
-**Files:** Create `backend/src/yitu/agent/drafts.py`; modify shipment application service; tests `backend/tests/agent/test_conversation_ordering.py`, `backend/tests/shipments/test_form_ordering.py`.
+**文件：** 新建 `backend/src/yitu/agent/drafts.py`；修改运单应用服务；测试 `backend/tests/agent/test_conversation_ordering.py`、`backend/tests/shipments/test_form_ordering.py`。
 
-**Interfaces:** Produces `DraftService.update/validate/missing_fields`, `CreateShipmentCommand`; both form and Agent call `ShipmentApplicationService.create(command)`.
+**接口：** 产出 `DraftService.update/validate/missing_fields`、`CreateShipmentCommand`；表单和 Agent 均调用 `ShipmentApplicationService.create(command)`。
 
-- [ ] Test multi-turn completion, user correction, unsupported address, restricted item, quote invalidation, draft-to-form export and shared creation behavior.
-- [ ] Run ordering tests; expect missing draft/shared command.
-- [ ] Implement persisted draft snapshots and deterministic validation/quote calls; AI only proposes structured field changes.
-- [ ] Run both form and Agent ordering tests; expect all pass.
-- [ ] Commit `feat: unify form and conversational ordering`.
+- [ ] 测试多轮补全、用户修正、不支持的地址、禁限寄物品、报价失效、草稿导出到表单和共享创建行为。
+- [ ] 运行下单测试；预期因缺少草稿/共享命令而失败。
+- [ ] 实现持久化草稿快照和确定性校验/报价调用；AI 只提出结构化字段变更。
+- [ ] 同时运行表单与 Agent 下单测试；预期全部通过。
+- [ ] 提交：`功能：统一表单与对话下单`。
 
-### Task 5: AgentActionGrant and Sensitive Write Tools
+### 任务 5：AgentActionGrant 与敏感写工具
 
-**Files:** Create `backend/src/yitu/agent/{grants,write_tools}.py`; migration `0020`; tests `backend/tests/agent/test_action_grants.py`.
+**文件：** 新建 `backend/src/yitu/agent/{grants,write_tools}.py`；迁移 `0020`；测试 `backend/tests/agent/test_action_grants.py`。
 
-**Interfaces:** Produces `issue_grant()`, `consume_grant()`, confirmed create-shipment/exception/redelivery tools.
+**接口：** 产出 `issue_grant()`、`consume_grant()`，以及经确认的创建运单、异常处理和再次派送工具。
 
-- [ ] Test missing, expired, consumed, wrong-user, wrong-action, changed-draft, changed-quote and concurrent consumption; every rejection must audit.
-- [ ] Run grant tests; expect missing service.
-- [ ] Implement canonical snapshot hashes, five-minute expiry, nonce uniqueness and atomic conditional consumption in the same business transaction.
-- [ ] Run migration and grant tests; expect all pass.
-- [ ] Commit `feat: authorize sensitive agent actions`.
+- [ ] 测试授权缺失、过期、已消费、用户错误、动作错误、草稿变化、报价变化和并发消费；每次拒绝都必须审计。
+- [ ] 运行授权测试；预期因缺少服务而失败。
+- [ ] 实现规范快照哈希、五分钟有效期、nonce 唯一性，并在同一业务事务中原子条件消费。
+- [ ] 运行迁移和授权测试；预期全部通过。
+- [ ] 提交：`功能：授权 Agent 敏感动作`。
 
-### Task 6: Layered Memory, Privacy, and Deletion
+### 任务 6：分层记忆、隐私与删除
 
-**Files:** Create `backend/src/yitu/agent/{memory,privacy,context}.py`; migration `0021`; tests `backend/tests/agent/test_memory.py`, `test_privacy.py`.
+**文件：** 新建 `backend/src/yitu/agent/{memory,privacy,context}.py`；迁移 `0021`；测试 `backend/tests/agent/test_memory.py`、`test_privacy.py`。
 
-**Interfaces:** Produces confirmed memory CRUD, semantic retrieval, context assembler, AI disable/delete endpoints.
+**接口：** 产出经确认的记忆增删改查、语义检索、上下文组装器，以及 AI 停用/删除端点。
 
-- [ ] Test explicit confirmation, cross-user isolation, expiry, prohibited secret memory, placeholders, minimum-send whitelist, conversation deletion and anonymized audit retention.
-- [ ] Run memory/privacy tests; expect missing components.
-- [ ] Implement message/work/durable/semantic layers and a deterministic redaction/context pipeline before model calls.
-- [ ] Run migration and tests; expect all pass.
-- [ ] Commit `feat: add private layered agent memory`.
+- [ ] 测试显式确认、跨用户隔离、过期、禁止记忆密钥、占位符、最小发送白名单、会话删除和匿名化审计保留。
+- [ ] 运行记忆/隐私测试；预期因缺少组件而失败。
+- [ ] 实现消息、工作、持久和语义记忆层，并在模型调用前执行确定性脱敏/上下文流水线。
+- [ ] 运行迁移和测试；预期全部通过。
+- [ ] 提交：`功能：新增私密分层 Agent 记忆`。
 
-### Task 7: Tracing, Evaluation Suite, Online Smoke, and Phase Gate
+### 任务 7：追踪、评测集、在线冒烟与阶段验收
 
-**Files:** Create `backend/src/yitu/agent/tracing.py`; create `backend/evals/cases/*.yaml`; tests `backend/tests/agent/test_evals.py`; add README Agent guide.
+**文件：** 新建 `backend/src/yitu/agent/tracing.py`；新建 `backend/evals/cases/*.yaml`；测试 `backend/tests/agent/test_evals.py`；添加 README Agent 指南。
 
-**Interfaces:** Produces trace IDs across API/retrieval/tool/audit and deterministic evaluation report.
+**接口：** 产出贯穿 API、检索、工具和审计的追踪 ID，以及确定性评测报告。
 
-- [ ] Add 30–50 cases covering extraction, tools, citations, injection, refusal, grants, memory and degradation; encode PRD thresholds.
-- [ ] Run fixed-adapter CI eval; require 100% security gates, ≥95% tool/extraction, ≥90% completion/citation and zero forbidden outcomes.
-- [ ] Ask user for provider/key/fee approval, then run a bounded online smoke test without printing secrets.
-- [ ] Run `cd backend; uv run ruff check .; uv run mypy src; uv run pytest -q`; expect all pass.
-- [ ] Commit `test: verify safe AI agent behavior`.
+- [ ] 添加 30–50 个用例，覆盖抽取、工具、引用、注入、拒答、授权、记忆和降级；写入 PRD 阈值。
+- [ ] 运行固定适配器 CI 评测；要求安全门槛 100%、工具/抽取 ≥95%、完成/引用 ≥90%，且禁止结果为零。
+- [ ] 请求用户批准供应商、密钥和费用后，再运行有界在线冒烟测试，且不得打印密钥。
+- [ ] 运行 `cd backend; uv run ruff check .; uv run mypy src; uv run pytest -q`；预期全部通过。
+- [ ] 提交：`测试：验证安全 AI Agent 行为`。
