@@ -16,4 +16,10 @@ COPY alembic.ini ./
 COPY migrations ./migrations
 COPY src ./src
 
-CMD ["uv", "run", "--no-sync", "uvicorn", "yitu.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+RUN addgroup --system yitu && \
+    adduser --system --ingroup yitu yitu && \
+    chown -R yitu:yitu /app
+
+USER yitu
+
+CMD [".venv/bin/uvicorn", "yitu.main:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
