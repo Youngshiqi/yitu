@@ -1,4 +1,8 @@
+from uuid import uuid4
+
+import pytest
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 
 from yitu.platform.database import SessionFactory
 
@@ -103,3 +107,26 @@ async def test_idempotency_records_enforces_scope_and_key_uniqueness() -> None:
         ).scalars().all()
 
     assert constraints == ["UNIQUE (scope, key)"]
+
+
+@pytest.mark.parametrize("request_hash", ["g" * 64, "a" * 63])
+async def test_idempotency_records_rejects_invalid_request_hash(
+    request_hash: str,
+) -> None:
+    async with SessionFactory() as session:
+        with pytest.raises(IntegrityError):
+            await session.execute(
+                text(
+                    "INSERT INTO idempotency_records ("
+                    "scope, key, request_hash, status, created_at, updated_at"
+                    ") VALUES ("
+                    ":scope, :key, :request_hash, 'completed', "
+                    "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP"
+                    ")"
+                ),
+                {
+                    "scope": f"request-hash-check-{uuid4()}",
+                    "key": "create-shipment",
+                    "request_hash": request_hash,
+                },
+            )
