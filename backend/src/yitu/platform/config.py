@@ -1,4 +1,5 @@
 from functools import lru_cache
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -7,7 +8,7 @@ class Settings(BaseSettings):
     """集中读取应用运行所需的环境配置。"""
 
     app_name: str = "Yitu Logistics API"
-    business_timezone: str = "Asia/Shanghai"
+    business_timezone: Literal["Asia/Shanghai"] = "Asia/Shanghai"
     database_url: str = (
         "postgresql+asyncpg://yitu:yitu_test@127.0.0.1:55432/yitu_test"
     )

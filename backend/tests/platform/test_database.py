@@ -2,12 +2,22 @@ from datetime import datetime
 
 import pytest
 
+from yitu.platform.config import Settings
 from yitu.platform.database import (
     SessionFactory,
     dispose_database,
     get_session,
     transactional_session,
 )
+
+
+def test_settings_rejects_non_business_timezone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("YITU_BUSINESS_TIMEZONE", "UTC")
+
+    with pytest.raises(ValueError):
+        Settings()
 
 
 async def test_connection_uses_business_timezone() -> None:
