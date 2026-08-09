@@ -8,6 +8,9 @@ class Settings(BaseSettings):
 
     app_name: str = "Yitu Logistics API"
     business_timezone: str = "Asia/Shanghai"
+    database_url: str = (
+        "postgresql+asyncpg://yitu:yitu_test@127.0.0.1:55432/yitu_test"
+    )
 
     model_config = SettingsConfigDict(env_prefix="YITU_", env_file=".env", extra="ignore")
 
