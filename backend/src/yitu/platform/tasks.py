@@ -1,4 +1,3 @@
-from asyncio import run
 from collections.abc import Awaitable, Callable
 from uuid import UUID
 
@@ -6,7 +5,7 @@ from sqlalchemy import text
 
 from yitu.platform.database import SessionFactory
 from yitu.platform.outbox import consume_once, relay_pending_events
-from yitu.worker import celery_app
+from yitu.worker import celery_app, run_async
 
 EventHandler = Callable[[dict[str, object], str], Awaitable[None]]
 _handlers: dict[str, EventHandler] = {}
@@ -20,7 +19,7 @@ def register_event_handler(event_type: str, handler: EventHandler) -> None:
 @celery_app.task(name="yitu.relay_outbox")  # type: ignore[untyped-decorator]
 def relay_outbox() -> int:
     """领取数据库中的到期事件并投递给 Celery。"""
-    return run(relay_pending_events(SessionFactory, _publish_event))
+    return run_async(relay_pending_events(SessionFactory, _publish_event))
 
 
 async def _publish_event(event_id: UUID) -> None:
@@ -31,7 +30,7 @@ async def _publish_event(event_id: UUID) -> None:
 @celery_app.task(name="yitu.consume_outbox_event")  # type: ignore[untyped-decorator]
 def consume_outbox_event(event_id: str) -> bool:
     """在同步 Celery Worker 中运行异步数据库消费流程。"""
-    return run(_consume_event(UUID(event_id)))
+    return run_async(_consume_event(UUID(event_id)))
 
 
 async def _consume_event(event_id: UUID) -> bool:

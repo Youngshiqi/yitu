@@ -52,17 +52,24 @@ services:
   worker:
     build:
       context: ./backend
+    hostname: yitu-worker
     environment:
       YITU_DATABASE_URL: ${YITU_DATABASE_URL}
       YITU_REDIS_URL: ${YITU_REDIS_URL}
     command: >-
       .venv/bin/celery -A yitu.worker:celery_app worker
-      --loglevel=INFO
+      --loglevel=INFO --hostname=worker@%h --beat
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      test:
+        ["CMD-SHELL", ".venv/bin/celery -A yitu.worker:celery_app inspect ping --destination worker@yitu-worker --timeout 3"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
 
 volumes:
   postgres_data:
