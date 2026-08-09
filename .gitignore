@@ -1,4 +1,5 @@
 .worktrees/
+.env
 __pycache__/
 *.py[cod]
 backend/.mypy_cache/
@@ -6,3 +7,4 @@ backend/.pytest_cache/
 backend/.ruff_cache/
 backend/.uv-cache/
 backend/.venv/
+backend/.coverage
