@@ -84,3 +84,41 @@ async def relay_pending_events(
                 {"event_id": event_id},
             )
     return len(event_ids)
+
+
+async def consume_once(
+    session: AsyncSession,
+    event_id: UUID,
+    handler: Callable[[dict[str, object], str], Awaitable[None]],
+) -> bool:
+    """使用数据库行锁保证同一事件的业务处理只成功执行一次。"""
+    record = (
+        await session.execute(
+            text(
+                "SELECT status, payload, idempotency_key FROM outbox_events "
+                "WHERE id = :event_id FOR UPDATE"
+            ),
+            {"event_id": event_id},
+        )
+    ).mappings().one_or_none()
+    if record is None:
+        raise LookupError(f"Outbox 事件不存在: {event_id}")
+    if record["status"] in {"completed", "dead"}:
+        return False
+    if record["status"] != "published":
+        raise RuntimeError(f"Outbox 事件状态不可消费: {record['status']}")
+
+    payload = record["payload"]
+    idempotency_key = record["idempotency_key"]
+    if not isinstance(payload, dict) or not isinstance(idempotency_key, str):
+        raise TypeError("Outbox 事件数据不完整")
+
+    await handler(payload, idempotency_key)
+    await session.execute(
+        text(
+            "UPDATE outbox_events SET status = 'completed', processed_at = :now "
+            "WHERE id = :event_id"
+        ),
+        {"event_id": event_id, "now": Clock.now()},
+    )
+    return True
