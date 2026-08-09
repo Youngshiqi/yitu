@@ -1,11 +1,26 @@
 import json
+import random
 from collections.abc import Awaitable, Callable
+from datetime import datetime, timedelta
 from uuid import UUID, uuid4
 
 from sqlalchemy import text
+from sqlalchemy.engine import RowMapping
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from yitu.platform.clock import Clock
+
+
+class RetryPolicy:
+    """计算失败任务的指数退避时间。"""
+
+    @staticmethod
+    def next_attempt(attempts: int, now: datetime, jitter: float) -> datetime:
+        """返回带 0–10% 随机抖动且最长 30 分钟的下次尝试时间。"""
+        if not 0 <= jitter <= 1:
+            raise ValueError("jitter 必须位于 0 到 1 之间")
+        delay_seconds = min(30 * (2 ** (attempts - 1)), 30 * 60)
+        return now + timedelta(seconds=delay_seconds * (1 + jitter * 0.1))
 
 
 class OutboxService:
@@ -95,7 +110,8 @@ async def consume_once(
     record = (
         await session.execute(
             text(
-                "SELECT status, payload, idempotency_key FROM outbox_events "
+                "SELECT status, event_type, business_id, payload, idempotency_key, "
+                "attempts FROM outbox_events "
                 "WHERE id = :event_id FOR UPDATE"
             ),
             {"event_id": event_id},
@@ -113,7 +129,14 @@ async def consume_once(
     if not isinstance(payload, dict) or not isinstance(idempotency_key, str):
         raise TypeError("Outbox 事件数据不完整")
 
-    await handler(payload, idempotency_key)
+    try:
+        async with session.begin_nested():
+            await handler(payload, idempotency_key)
+    # Worker 必须把未知 handler 异常转成数据库中的可恢复状态。
+    except Exception as error:  # noqa: BLE001
+        await _record_failure(session, event_id, record, error)
+        return False
+
     await session.execute(
         text(
             "UPDATE outbox_events SET status = 'completed', processed_at = :now "
@@ -122,3 +145,73 @@ async def consume_once(
         {"event_id": event_id, "now": Clock.now()},
     )
     return True
+
+
+async def _record_failure(
+    session: AsyncSession,
+    event_id: UUID,
+    record: RowMapping,
+    error: Exception,
+) -> None:
+    """保存一次失败，达到第五次时转入数据库死信。"""
+    attempts = int(record["attempts"]) + 1
+    now = Clock.now()
+    error_message = str(error)
+    if attempts < 5:
+        await session.execute(
+            text(
+                "UPDATE outbox_events SET status = 'pending', attempts = :attempts, "
+                "next_attempt_at = :next_attempt_at, last_error = :last_error "
+                "WHERE id = :event_id"
+            ),
+            {
+                "event_id": event_id,
+                "attempts": attempts,
+                "next_attempt_at": RetryPolicy.next_attempt(
+                    attempts,
+                    now,
+                    random.random(),
+                ),
+                "last_error": error_message,
+            },
+        )
+        return
+
+    await session.execute(
+        text(
+            "UPDATE outbox_events SET status = 'dead', attempts = :attempts, "
+            "last_error = :last_error WHERE id = :event_id"
+        ),
+        {
+            "event_id": event_id,
+            "attempts": attempts,
+            "last_error": error_message,
+        },
+    )
+    await session.execute(
+        text(
+            "INSERT INTO dead_letters ("
+            "id, event_id, event_type, business_id, payload, idempotency_key, "
+            "attempts, last_error, failed_at, suggested_action"
+            ") VALUES ("
+            ":id, :event_id, :event_type, :business_id, CAST(:payload AS JSONB), "
+            ":idempotency_key, :attempts, :last_error, :failed_at, :suggested_action"
+            ")"
+        ),
+        {
+            "id": uuid4(),
+            "event_id": event_id,
+            "event_type": record["event_type"],
+            "business_id": record["business_id"],
+            "payload": json.dumps(
+                record["payload"],
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ),
+            "idempotency_key": record["idempotency_key"],
+            "attempts": attempts,
+            "last_error": error_message,
+            "failed_at": now,
+            "suggested_action": "修复失败原因后由管理员重放",
+        },
+    )
