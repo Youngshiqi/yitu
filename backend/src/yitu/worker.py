@@ -39,7 +39,7 @@ celery_app = Celery(
     "yitu",
     broker=settings.redis_url,
     backend=settings.redis_url,
-    include=["yitu.platform.tasks", "yitu.sla.tasks"],
+    include=["yitu.platform.tasks", "yitu.sla.tasks", "yitu.notifications.tasks"],
 )
 celery_app.conf.update(
     accept_content=["json"],
@@ -61,5 +61,9 @@ celery_app.conf.beat_schedule = {
         "task": "yitu.scan_sla_breaches",
         "schedule": 300.0,
         "args": ("scheduled",),
+    },
+    "deliver-notifications-every-5-seconds": {
+        "task": "yitu.deliver_notifications",
+        "schedule": 5.0,
     },
 }

@@ -15,6 +15,7 @@ from yitu.platform.idempotency import (
     IdempotencyService,
     canonical_json_sha256,
 )
+from yitu.platform.outbox import OutboxService
 from yitu.pricing.models import QuoteSnapshot
 from yitu.shipments.enums import PickupMethod, ShipmentStatus
 from yitu.shipments.models import Shipment
@@ -40,6 +41,16 @@ class PaymentService:
             self._session.add(transaction)
             target = ShipmentStatus.PENDING_PICKUP if PickupMethod(shipment.pickup_method) is PickupMethod.DOOR_PICKUP else ShipmentStatus.WAITING_FOR_DROPOFF
             await ShipmentTransitionService(self._session).transition(shipment, target, actor, "confirm_payment", f"payment:{shipment.id}")
+            await OutboxService(self._session).append(
+                event_type="notification.requested",
+                business_id=f"shipment:{shipment.id}",
+                payload={
+                    "recipient_id": str(actor.id),
+                    "template_code": "PAYMENT_SUCCESS",
+                    "template_data": {"shipment_no": shipment.shipment_no},
+                },
+                idempotency_key=f"notification:{shipment.id}:payment-success",
+            )
             await self._session.flush()
             return IdempotencyResponse(201, PaymentTransactionView.model_validate(transaction).model_dump(mode="json"))
 

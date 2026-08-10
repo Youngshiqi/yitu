@@ -2,6 +2,7 @@ from uuid import uuid4
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import text
 
 from yitu.demo.seed import DEMO_PASSWORD, seed_demo_users
 from yitu.main import create_app
@@ -37,7 +38,8 @@ async def test_payment_supplement_and_refund_are_idempotent() -> None:
             quote_data = quote.json()
             shipment = await client.post("/api/v1/shipments", headers={**headers, "Idempotency-Key": f"payment-shipment-{uuid4()}"}, json={"draft": {"sender_address_id": address_id, "receiver_address_id": address_id, "pickup_method": "DOOR_PICKUP", "delivery_method": "HOME_DELIVERY"}})
             assert shipment.status_code == 201, shipment.text
-            shipment_id = shipment.json()["id"]
+            shipment_data = shipment.json()
+            shipment_id = shipment_data["id"]
             payment_key = f"payment-{uuid4()}"
             paid = await client.post(f"/api/v1/payments/quotes/{quote_data['id']}/pay", headers={**headers, "Idempotency-Key": payment_key}, json={"shipment_id": shipment_id, "amount_cents": quote_data["total_cents"]})
             assert paid.status_code == 201, paid.text
@@ -57,3 +59,20 @@ async def test_payment_supplement_and_refund_are_idempotent() -> None:
     finally:
         settings.app_profile = original_profile
         get_settings.cache_clear()
+
+    async with SessionFactory() as session:
+        notification_payload = (
+            await session.execute(
+                text(
+                    "SELECT payload FROM outbox_events "
+                    "WHERE event_type = 'notification.requested' "
+                    "AND business_id = :business_id"
+                ),
+                {"business_id": f"shipment:{shipment_id}"},
+            )
+        ).scalar_one()
+    assert notification_payload == {
+        "recipient_id": "30000000-0000-4000-8000-000000000001",
+        "template_code": "PAYMENT_SUCCESS",
+        "template_data": {"shipment_no": shipment_data["shipment_no"]},
+    }

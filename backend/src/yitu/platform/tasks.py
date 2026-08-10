@@ -2,12 +2,15 @@ from collections.abc import Awaitable, Callable
 from uuid import UUID
 
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from yitu.platform.database import SessionFactory
 from yitu.platform.outbox import consume_once, relay_pending_events
 from yitu.worker import celery_app, run_async
 
-EventHandler = Callable[[dict[str, object], str], Awaitable[None]]
+EventHandler = Callable[
+    [AsyncSession, UUID, dict[str, object], str], Awaitable[None]
+]
 _handlers: dict[str, EventHandler] = {}
 
 
@@ -47,10 +50,18 @@ async def _consume_event(event_id: UUID) -> bool:
         if handler is None:
 
             async def missing_handler(
-                payload: dict[str, object], idempotency_key: str
+                handler_session: AsyncSession,
+                handler_event_id: UUID,
+                payload: dict[str, object],
+                idempotency_key: str,
             ) -> None:
-                del payload, idempotency_key
+                del handler_session, handler_event_id, payload, idempotency_key
                 raise RuntimeError(f"未注册事件处理器: {event_type}")
 
             handler = missing_handler
-        return await consume_once(session, event_id, handler)
+        async def consume_handler(
+            payload: dict[str, object], idempotency_key: str
+        ) -> None:
+            await handler(session, event_id, payload, idempotency_key)
+
+        return await consume_once(session, event_id, consume_handler)
