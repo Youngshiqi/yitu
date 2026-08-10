@@ -103,6 +103,7 @@ FastAPI 参数校验错误仍可能返回标准 `422` 结构。
 | `POST` | `/api/v1/pricing/quotes` | 创建报价 |
 | `GET` | `/api/v1/pricing/quotes/{quote_id}` | 查看报价 |
 | `POST` | `/api/v1/shipments` | 创建运单 |
+| `GET` | `/api/v1/shipments` | 运单列表，支持 `status/limit/offset` |
 | `GET` | `/api/v1/shipments/{shipment_id}` | 查看运单 |
 | `GET` | `/api/v1/shipments/{shipment_id}/tracking` | 查看轨迹 |
 | `POST` | `/api/v1/payments/quotes/{quote_id}/pay` | 支付报价 |
@@ -160,7 +161,25 @@ FastAPI 参数校验错误仍可能返回标准 `422` 结构。
 }
 ```
 
-前端注意：当前没有 `GET /api/v1/shipments` 运单列表接口。第一版如果需要列表页，需要补后端接口；否则先通过创建结果进入详情页。
+运单列表响应：
+
+```json
+{
+  "items": [
+    {
+      "id": "uuid",
+      "shipment_no": "YT202608110001",
+      "owner_id": "uuid",
+      "status": "PENDING_PICKUP"
+    }
+  ],
+  "total": 1,
+  "limit": 50,
+  "offset": 0
+}
+```
+
+列表权限：客户只能查看自己的运单；运营管理员可以查看全部运单。
 
 ### 3.3 通知与 SSE
 
@@ -332,11 +351,10 @@ CANCEL, INTERCEPTION, REDELIVERY, CONVERT_TO_PICKUP, RETURN
 
 这些不是阶段三阻塞，但会影响前端体验，建议前端第一批联调时顺手补：
 
-1. 缺少运单列表：需要 `GET /api/v1/shipments` 支撑客户/运营列表页。
-2. 运单详情较薄：`ShipmentView` 只返回 `id/shipment_no/owner_id/status`，前端详情页可能还需要地址快照、寄收方式、关联报价/金额。
-3. 调度任务响应未声明正式 schema：当前返回 `list[dict]`，前端可先用字段接入，但建议后端补 `CourierTaskView`。
-4. 部分状态动作返回 `204`：适合命令式按钮，但前端点击后需要主动刷新运单、任务和轨迹。
-5. OpenAPI 没有声明 BearerAuth security scheme：前端照样可加 token，但后续生成 TS client 前建议补。
+1. 运单详情较薄：`ShipmentView` 只返回 `id/shipment_no/owner_id/status`，前端详情页可能还需要地址快照、寄收方式、关联报价/金额。
+2. 调度任务响应未声明正式 schema：当前返回 `list[dict]`，前端可先用字段接入，但建议后端补 `CourierTaskView`。
+3. 部分状态动作返回 `204`：适合命令式按钮，但前端点击后需要主动刷新运单、任务和轨迹。
+4. OpenAPI 没有声明 BearerAuth security scheme：前端照样可加 token，但后续生成 TS client 前建议补。
 
 ## 7. 推荐前端切片顺序
 
@@ -347,4 +365,3 @@ CANCEL, INTERCEPTION, REDELIVERY, CONVERT_TO_PICKUP, RETURN
 5. 快递员/网点履约按钮台。
 6. 运营异常台、恢复动作。
 7. 系统管理员死信台、面单查看。
-

@@ -1,6 +1,7 @@
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, Request, Response, status
+from fastapi import APIRouter, Depends, Header, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yitu.dispatch.service import DispatchService
@@ -19,6 +20,7 @@ from yitu.shipments.schemas import (
 )
 from yitu.shipments.service import (
     ShipmentApplicationService,
+    ShipmentListResponse,
     ShipmentTransitionService,
     ShipmentView,
 )
@@ -37,6 +39,25 @@ async def create_shipment(command: CreateShipmentCommand, idempotency_key: str =
     result = await ShipmentApplicationService(session).create(command, user, idempotency_key)
     await session.commit()
     return result
+
+
+@router.get("", response_model=ShipmentListResponse)
+async def list_shipments(
+    shipment_status: Annotated[
+        ShipmentStatus | None,
+        Query(alias="status"),
+    ] = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    user: CurrentUser = _current_user,
+    session: AsyncSession = _session,
+) -> ShipmentListResponse:
+    return await ShipmentApplicationService(session).list(
+        user,
+        shipment_status=shipment_status,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.post("/{shipment_id}/confirm-payment", status_code=status.HTTP_204_NO_CONTENT)

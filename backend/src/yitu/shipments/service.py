@@ -1,12 +1,14 @@
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yitu.addresses.models import Address
+from yitu.identity.models import Role
 from yitu.identity.service import CurrentUser, require_resource_owner
 from yitu.platform.audit import AuditService
+from yitu.platform.errors import AppError
 from yitu.platform.idempotency import (
     IdempotencyResponse,
     IdempotencyService,
@@ -32,11 +34,57 @@ class ShipmentView(BaseModel):
     status: ShipmentStatus
 
 
+class ShipmentListResponse(BaseModel):
+    """运单列表响应，供前端列表页按当前身份安全分页读取。"""
+
+    items: list[ShipmentView]
+    total: int
+    limit: int
+    offset: int
+
+
 class ShipmentApplicationService:
     """负责创建运单聚合并保证请求幂等。"""
 
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
+
+    async def list(
+        self,
+        actor: CurrentUser,
+        *,
+        shipment_status: ShipmentStatus | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> ShipmentListResponse:
+        """按身份范围返回运单列表：客户仅本人，运营管理员可看全部。"""
+        if actor.role is Role.CUSTOMER:
+            base_query = select(Shipment).where(Shipment.owner_id == actor.id)
+            count_query = select(func.count()).select_from(Shipment).where(
+                Shipment.owner_id == actor.id
+            )
+        elif actor.role is Role.OPERATIONS_ADMIN:
+            base_query = select(Shipment)
+            count_query = select(func.count()).select_from(Shipment)
+        else:
+            raise AppError("FORBIDDEN_ROLE", "角色权限不足", 403)
+        if shipment_status is not None:
+            base_query = base_query.where(Shipment.status == shipment_status)
+            count_query = count_query.where(Shipment.status == shipment_status)
+        rows = (
+            await self._session.scalars(
+                base_query.order_by(Shipment.shipment_no.desc())
+                .limit(limit)
+                .offset(offset)
+            )
+        ).all()
+        total = await self._session.scalar(count_query)
+        return ShipmentListResponse(
+            items=[ShipmentView.model_validate(shipment) for shipment in rows],
+            total=total or 0,
+            limit=limit,
+            offset=offset,
+        )
 
     async def create(
         self, command: CreateShipmentCommand, actor: CurrentUser, idempotency_key: str
