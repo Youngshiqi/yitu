@@ -74,6 +74,74 @@ class SLAService:
         await self.session.flush()
         return instance
 
+    async def start_recovery_stage(self, shipment_id: UUID, stage: str) -> SLAInstance | None:
+        """使用运单既有 SLA 路线启动恢复阶段；没有规则时保持无副作用。"""
+        existing = await self.session.scalar(
+            select(SLAInstance).where(
+                SLAInstance.shipment_id == shipment_id,
+                SLAInstance.stage == stage,
+            )
+        )
+        if existing is not None:
+            return existing
+        latest_instance = await self.session.scalar(
+            select(SLAInstance)
+            .where(SLAInstance.shipment_id == shipment_id)
+            .order_by(SLAInstance.started_at.desc().nullslast())
+            .limit(1)
+        )
+        if latest_instance is None:
+            return None
+        latest_rule = await self.session.get(SLARule, latest_instance.rule_id)
+        if latest_rule is None:
+            return None
+        rules = (await self.session.scalars(
+            select(SLARule).where(
+                SLARule.route_code == latest_rule.route_code,
+                SLARule.service_type == latest_rule.service_type,
+                SLARule.stage == stage,
+                SLARule.active.is_(True),
+            ).order_by(SLARule.effective_from.desc())
+        )).all()
+        now = to_business_timezone(self.clock.now())
+        rule = next((item for item in rules if rule_is_effective(item, now)), None)
+        if rule is None:
+            return None
+        shipment = await self.session.get(Shipment, shipment_id)
+        if shipment is None:
+            raise ValueError("运单不存在")
+        instance = SLAInstance(
+            shipment_id=shipment.id,
+            owner_id=shipment.owner_id,
+            rule_id=rule.id,
+            rule_version=rule.version,
+            stage=stage,
+            status="RUNNING",
+            started_at=now,
+            promised_delivery_at=calculate_promised_at(rule, now),
+        )
+        self.session.add(instance)
+        await self.session.flush()
+        return instance
+
+    async def cancel_active_for_shipment(self, shipment_id: UUID, reason: str) -> int:
+        """取消运单仍在运行或暂停的 SLA 实例，保留历史承诺事实。"""
+        instances = list(
+            await self.session.scalars(
+                select(SLAInstance).where(
+                    SLAInstance.shipment_id == shipment_id,
+                    SLAInstance.status.in_(["RUNNING", "PAUSED"]),
+                )
+            )
+        )
+        now = to_business_timezone(self.clock.now())
+        for instance in instances:
+            instance.status = "CANCELLED"
+            instance.completed_at = now
+            instance.last_scan_key = reason[:128]
+        await self.session.flush()
+        return len(instances)
+
     async def pause(self, instance_id: UUID, reason: str) -> SLAInstance:
         """暂停运行中的 SLA，重复暂停保持幂等。"""
         instance = await self._get_instance(instance_id)

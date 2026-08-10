@@ -40,6 +40,7 @@ class FixedClock:
 async def test_eta_does_not_overwrite_promise_and_scan_is_idempotent() -> None:
     start_at = datetime(2026, 8, 14, 10, tzinfo=TZ)
     clock = FixedClock(start_at)
+    route_code = f"TEST-{uuid4()}"
     async with SessionFactory() as session, session.begin():
         users = await seed_demo_users(session)
         customer = next(user for user in users if user.demo_key == "customer")
@@ -49,13 +50,13 @@ async def test_eta_does_not_overwrite_promise_and_scan_is_idempotent() -> None:
             status=ShipmentStatus.PENDING_PICKUP,
         )
         rule = SLARule(
-            version=f"sla-{uuid4()}", route_code="TEST", service_type="STANDARD", stage="DELIVERY",
+            version=f"sla-{uuid4()}", route_code=route_code, service_type="STANDARD", stage="DELIVERY",
             target_natural_hours=1, effective_from=start_at - timedelta(days=1),
         )
         session.add_all([shipment, rule])
         await session.flush()
         service = SLAService(session, clock=clock)
-        instance = await service.start(shipment.id, "TEST", "DELIVERY")
+        instance = await service.start(shipment.id, route_code, "DELIVERY")
         frozen_promise = instance.promised_delivery_at
         await service.update_eta(instance.id, timedelta(minutes=20))
         assert instance.promised_delivery_at == frozen_promise
@@ -70,6 +71,7 @@ async def test_eta_does_not_overwrite_promise_and_scan_is_idempotent() -> None:
 async def test_scan_breaches_opens_station_delay_case_once() -> None:
     start_at = datetime(2026, 8, 14, 10, tzinfo=TZ)
     clock = FixedClock(start_at)
+    route_code = f"TEST-{uuid4()}"
     async with SessionFactory() as session, session.begin():
         users = await seed_demo_users(session)
         customer = next(user for user in users if user.demo_key == "customer")
@@ -82,7 +84,7 @@ async def test_scan_breaches_opens_station_delay_case_once() -> None:
         )
         rule = SLARule(
             version=f"sla-auto-{uuid4()}",
-            route_code="TEST",
+            route_code=route_code,
             service_type="STANDARD",
             stage="PICKUP",
             target_natural_hours=1,
@@ -91,7 +93,7 @@ async def test_scan_breaches_opens_station_delay_case_once() -> None:
         session.add_all([shipment, rule])
         await session.flush()
         service = SLAService(session, clock=clock)
-        instance = await service.start(shipment.id, "TEST", "PICKUP")
+        instance = await service.start(shipment.id, route_code, "PICKUP")
         clock.value = start_at + timedelta(hours=2)
         changed = await service.scan_breaches("window-1")
         assert instance.id in {item.id for item in changed}
@@ -116,6 +118,7 @@ async def test_scan_breaches_opens_station_delay_case_once() -> None:
 async def test_pause_and_resume_for_source_only_affect_matching_pause() -> None:
     start_at = datetime(2026, 8, 14, 10, tzinfo=TZ)
     clock = FixedClock(start_at)
+    route_code = f"TEST-{uuid4()}"
     first_source = uuid4()
     second_source = uuid4()
     async with SessionFactory() as session, session.begin():
@@ -130,7 +133,7 @@ async def test_pause_and_resume_for_source_only_affect_matching_pause() -> None:
         )
         rule = SLARule(
             version=f"sla-source-{uuid4()}",
-            route_code="TEST",
+            route_code=route_code,
             service_type="STANDARD",
             stage="DELIVERY",
             target_natural_hours=4,
@@ -139,7 +142,7 @@ async def test_pause_and_resume_for_source_only_affect_matching_pause() -> None:
         session.add_all([shipment, rule])
         await session.flush()
         service = SLAService(session, clock=clock)
-        instance = await service.start(shipment.id, "TEST", "DELIVERY")
+        instance = await service.start(shipment.id, route_code, "DELIVERY")
         original_promise = instance.promised_delivery_at
         await service.pause_for_source(
             instance.id,

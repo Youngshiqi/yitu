@@ -18,6 +18,7 @@ from yitu.pricing.models import PricingRule, QuoteSnapshot
 from yitu.returns.models import RecoveryCase
 from yitu.shipments.enums import DeliveryMethod, PickupMethod, ShipmentStatus
 from yitu.shipments.models import Shipment
+from yitu.sla.models import SLAInstance, SLARule
 
 pytestmark = pytest.mark.asyncio(loop_scope="function")
 TZ = ZoneInfo("Asia/Shanghai")
@@ -88,6 +89,16 @@ async def _seed_paid_waiting_shipment(station: Station, customer: User) -> Shipm
         )
         session.add(rule)
         await session.flush()
+        sla_rule = SLARule(
+            version=f"recovery-cancel-sla-{uuid4()}",
+            route_code="TEST",
+            service_type="STANDARD",
+            stage="PICKUP",
+            target_natural_hours=4,
+            effective_from=datetime(2026, 8, 10, 8, tzinfo=TZ),
+        )
+        session.add(sla_rule)
+        await session.flush()
         quote = QuoteSnapshot(
             owner_id=customer.id,
             rule_id=rule.id,
@@ -114,6 +125,18 @@ async def _seed_paid_waiting_shipment(station: Station, customer: User) -> Shipm
                 created_at=datetime(2026, 8, 10, 9, 5, tzinfo=TZ),
             )
         )
+        session.add(
+            SLAInstance(
+                shipment_id=shipment.id,
+                owner_id=customer.id,
+                rule_id=sla_rule.id,
+                rule_version=sla_rule.version,
+                stage="PICKUP",
+                status="RUNNING",
+                started_at=datetime(2026, 8, 10, 9, 10, tzinfo=TZ),
+                promised_delivery_at=datetime(2026, 8, 10, 13, 10, tzinfo=TZ),
+            )
+        )
     return shipment
 
 
@@ -136,9 +159,55 @@ async def _seed_delivery_shipment(station: Station, customer: User, courier: Use
         assignee_id=courier.id,
     )
     async with SessionFactory() as session, session.begin():
+        delivery_rule = SLARule(
+            version=f"recovery-delivery-sla-{uuid4()}",
+            route_code="TEST",
+            service_type="STANDARD",
+            stage="DELIVERY",
+            target_natural_hours=4,
+            effective_from=datetime(2026, 8, 10, 8, tzinfo=TZ),
+        )
+        redelivery_rule = SLARule(
+            version=f"recovery-redelivery-sla-{uuid4()}",
+            route_code="TEST",
+            service_type="STANDARD",
+            stage="DELIVERY_REDELIVERY",
+            target_natural_hours=4,
+            effective_from=datetime(2026, 8, 10, 8, tzinfo=TZ),
+        )
+        pickup_rule = SLARule(
+            version=f"recovery-pickup-sla-{uuid4()}",
+            route_code="TEST",
+            service_type="STANDARD",
+            stage="PICKUP_AT_STATION",
+            target_natural_hours=8,
+            effective_from=datetime(2026, 8, 10, 8, tzinfo=TZ),
+        )
+        return_rule = SLARule(
+            version=f"recovery-return-sla-{uuid4()}",
+            route_code="TEST",
+            service_type="STANDARD",
+            stage="RETURN",
+            target_natural_hours=24,
+            effective_from=datetime(2026, 8, 10, 8, tzinfo=TZ),
+        )
+        session.add_all([delivery_rule, redelivery_rule, pickup_rule, return_rule])
+        await session.flush()
         session.add(shipment)
         await session.flush()
         session.add(task)
+        session.add(
+            SLAInstance(
+                shipment_id=shipment.id,
+                owner_id=customer.id,
+                rule_id=delivery_rule.id,
+                rule_version=delivery_rule.version,
+                stage="DELIVERY",
+                status="RUNNING",
+                started_at=datetime(2026, 8, 10, 9, tzinfo=TZ),
+                promised_delivery_at=datetime(2026, 8, 10, 13, tzinfo=TZ),
+            )
+        )
         await session.flush()
     return shipment, task
 
@@ -177,7 +246,16 @@ async def test_paid_waiting_shipment_can_be_cancelled_with_refund_idempotently()
                 PaymentTransaction.transaction_type == "REFUND",
             )
         )
+        active_sla_count = await session.scalar(
+            select(func.count())
+            .select_from(SLAInstance)
+            .where(
+                SLAInstance.shipment_id == shipment.id,
+                SLAInstance.status.in_(["RUNNING", "PAUSED"]),
+            )
+        )
     assert refund_count == 1
+    assert active_sla_count == 0
 
 
 async def test_delivery_recovery_actions_cover_interception_redelivery_pickup_and_return() -> None:
@@ -248,6 +326,24 @@ async def test_delivery_recovery_actions_cover_interception_redelivery_pickup_an
             .select_from(RecoveryCase)
             .where(RecoveryCase.shipment_id.in_([shipment.id, return_shipment.id]))
         )
+        recovery_sla_stages = set(
+            await session.scalars(
+                select(SLAInstance.stage).where(
+                    SLAInstance.shipment_id.in_([shipment.id, return_shipment.id]),
+                    SLAInstance.stage.in_(["DELIVERY_REDELIVERY", "PICKUP_AT_STATION", "RETURN"]),
+                )
+            )
+        )
+        return_active_sla_count = await session.scalar(
+            select(func.count())
+            .select_from(SLAInstance)
+            .where(
+                SLAInstance.shipment_id == return_shipment.id,
+                SLAInstance.status.in_(["RUNNING", "PAUSED"]),
+            )
+        )
     assert old_task is not None
     assert old_task.status == CourierTaskStatus.CANCELLED
     assert recovery_count == 6
+    assert recovery_sla_stages == {"DELIVERY_REDELIVERY", "PICKUP_AT_STATION", "RETURN"}
+    assert return_active_sla_count == 0

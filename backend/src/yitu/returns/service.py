@@ -25,6 +25,7 @@ from yitu.shipments.control import ShipmentControlService
 from yitu.shipments.enums import DeliveryMethod, ShipmentStatus
 from yitu.shipments.models import Shipment
 from yitu.shipments.transport_models import TransportLeg, TransportLegStatus
+from yitu.sla.service import SLAService
 from yitu.tracking.service import append_tracking_event
 
 
@@ -204,6 +205,7 @@ class ReturnService:
         recovery.status = RecoveryStatus.COMPLETED
         recovery.completed_at = Clock.now()
         await self._cancel_active_tasks(shipment.id, reason)
+        await SLAService(self._session).cancel_active_for_shipment(shipment.id, "cancel")
         return refund_amount, None
 
     async def _interception_operation(
@@ -250,6 +252,7 @@ class ReturnService:
         )
         self._session.add(task)
         await self._session.flush()
+        await SLAService(self._session).start_recovery_stage(shipment.id, "DELIVERY_REDELIVERY")
         shipment.status = ShipmentStatus.DELIVERY_ASSIGNED
         recovery.status = RecoveryStatus.COMPLETED
         recovery.completed_at = Clock.now()
@@ -273,6 +276,7 @@ class ReturnService:
         await self._cancel_active_delivery_tasks(shipment.id, reason)
         shipment.delivery_method = DeliveryMethod.STATION_PICKUP
         shipment.status = ShipmentStatus.WAITING_FOR_RECIPIENT_PICKUP
+        await SLAService(self._session).start_recovery_stage(shipment.id, "PICKUP_AT_STATION")
         recovery.status = RecoveryStatus.COMPLETED
         recovery.completed_at = Clock.now()
         return 0, None
@@ -289,6 +293,7 @@ class ReturnService:
         if ShipmentStatus(shipment.status) in {ShipmentStatus.PENDING_PAYMENT, ShipmentStatus.CANCELLED, ShipmentStatus.DELIVERED}:
             raise AppError("RETURN_NOT_ALLOWED", "当前阶段不能审批退回", 409)
         shipment.status = ShipmentStatus.RETURN_APPROVED
+        await SLAService(self._session).start_recovery_stage(shipment.id, "RETURN")
         recovery.status = RecoveryStatus.APPROVED
         return 0, None
 
@@ -320,6 +325,7 @@ class ReturnService:
             recovery.status = RecoveryStatus.COMPLETED
             recovery.completed_at = Clock.now()
             refund_amount = await self._refund_paid_amount(shipment, actor, idempotency_key)
+            await SLAService(self._session).cancel_active_for_shipment(shipment.id, "return_completed")
             leg = await self._session.scalar(
                 select(TransportLeg)
                 .where(
