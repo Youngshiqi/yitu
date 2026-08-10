@@ -10,6 +10,8 @@
 4. 运行 `docker compose ps` 查看四个服务状态。
 5. 访问 `http://localhost:8000/api/v1/health`。
 
+PostgreSQL 为避免与本机及测试数据库冲突，映射到宿主机 `127.0.0.1:55433`；容器内部仍使用 `5432`。
+
 数据库迁移由 API 容器启动时自动执行。停止服务使用 `docker compose down`；该命令保留数据库卷。
 
 ## 本地演示身份
