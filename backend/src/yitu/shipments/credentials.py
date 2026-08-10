@@ -59,7 +59,12 @@ class LastMileService:
             existing.expires_at = Clock().now()
         if ShipmentStatus(shipment.status) is ShipmentStatus.AT_DESTINATION_STATION:
             await ShipmentTransitionService(self._session).transition(shipment, ShipmentStatus.WAITING_FOR_RECIPIENT_PICKUP, actor, "issue_pickup_credential", request_id)
-        raw_code = code or f"{secrets.randbelow(1_000_000):06d}"
+        settings = get_settings()
+        raw_code = code or (
+            settings.demo_pickup_code
+            if settings.app_profile == "demo"
+            else f"{secrets.randbelow(1_000_000):06d}"
+        )
         credential = PickupCredential(shipment_id=shipment_id, station_id=actor.station_id, code_hash=_hasher.hash(raw_code + get_settings().pickup_code_pepper), expires_at=Clock().now() + expires_in, failed_attempts=0, created_at=Clock().now())
         self._session.add(credential)
         await self._session.flush()

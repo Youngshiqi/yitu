@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     jwt_secret: str = "仅供本地开发的默认密钥，请在生产环境替换"
     jwt_expire_minutes: int = 30
     pickup_code_pepper: str = "仅供本地开发的取件码 pepper，请在生产环境替换"
+    demo_pickup_code: str = "123456"
 
     model_config = SettingsConfigDict(env_prefix="YITU_", env_file=".env", extra="ignore")
 

@@ -7,8 +7,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from yitu.dispatch.models import CourierTask
 from yitu.dispatch.service import DispatchService
+from yitu.identity.models import Role
 from yitu.identity.service import CurrentUser, get_current_user
 from yitu.platform.database import get_session
+from yitu.platform.errors import AppError
 from yitu.shipments.credentials import LastMileService
 from yitu.shipments.linehaul import LinehaulResult, LinehaulService
 from yitu.shipments.service import ShipmentView
@@ -79,8 +81,13 @@ async def start_delivery(shipment_id: UUID, user: CurrentUser = _current_user, s
 
 @router.get("/tasks")
 async def list_tasks(shipment_id: UUID | None = None, user: CurrentUser = _current_user, session: AsyncSession = _session) -> list[dict[str, object]]:
-    del user
     query = select(CourierTask)
+    if user.role in {Role.COURIER, Role.STATION_OPERATOR}:
+        if user.station_id is None:
+            raise AppError("STATION_SCOPE_REQUIRED", "当前身份缺少所属网点", 403)
+        query = query.where(CourierTask.station_id == user.station_id)
+    elif user.role is not Role.OPERATIONS_ADMIN:
+        raise AppError("FORBIDDEN_ROLE", "角色权限不足", 403)
     if shipment_id is not None:
         query = query.where(CourierTask.shipment_id == shipment_id)
     tasks = list((await session.scalars(query)).all())

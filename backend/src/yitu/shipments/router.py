@@ -16,6 +16,8 @@ from yitu.shipments.service import (
     ShipmentTransitionService,
     ShipmentView,
 )
+from yitu.tracking.schemas import TrackingEventView
+from yitu.tracking.service import list_tracking_events
 
 router = APIRouter(prefix="/api/v1/shipments", tags=["shipments"])
 _session = Depends(get_session)
@@ -33,6 +35,8 @@ async def create_shipment(command: CreateShipmentCommand, idempotency_key: str =
 
 @router.post("/{shipment_id}/confirm-payment", status_code=status.HTTP_204_NO_CONTENT)
 async def confirm_payment(shipment_id: UUID, user: CurrentUser = _current_user, session: AsyncSession = _session) -> Response:
+    if user.role is not Role.CUSTOMER:
+        raise AppError("FORBIDDEN_ROLE", "角色权限不足", 403)
     shipment = await session.get(Shipment, shipment_id)
     if shipment is None:
         raise AppError("SHIPMENT_NOT_FOUND", "运单不存在", 404)
@@ -46,3 +50,27 @@ async def confirm_payment(shipment_id: UUID, user: CurrentUser = _current_user, 
         await DispatchService(session).create_pickup_task(shipment, shipment.origin_station_id)
     await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/{shipment_id}", response_model=ShipmentView)
+async def get_shipment(shipment_id: UUID, user: CurrentUser = _current_user, session: AsyncSession = _session) -> ShipmentView:
+    """返回客户本人运单的当前状态。"""
+    if user.role is not Role.CUSTOMER:
+        raise AppError("FORBIDDEN_ROLE", "角色权限不足", 403)
+    shipment = await session.get(Shipment, shipment_id)
+    if shipment is None:
+        raise AppError("SHIPMENT_NOT_FOUND", "运单不存在", 404)
+    require_resource_owner(shipment.owner_id, user)
+    return ShipmentView.model_validate(shipment)
+
+
+@router.get("/{shipment_id}/tracking", response_model=list[TrackingEventView])
+async def get_tracking(shipment_id: UUID, user: CurrentUser = _current_user, session: AsyncSession = _session) -> list[TrackingEventView]:
+    """按顺序返回客户本人可见的运单轨迹。"""
+    if user.role is not Role.CUSTOMER:
+        raise AppError("FORBIDDEN_ROLE", "角色权限不足", 403)
+    shipment = await session.get(Shipment, shipment_id)
+    if shipment is None:
+        raise AppError("SHIPMENT_NOT_FOUND", "运单不存在", 404)
+    require_resource_owner(shipment.owner_id, user)
+    return [TrackingEventView.model_validate(event) for event in await list_tracking_events(session, shipment_id)]

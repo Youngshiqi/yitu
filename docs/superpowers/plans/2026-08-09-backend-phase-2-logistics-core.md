@@ -184,17 +184,17 @@
 
 **产出：** 七个确定性演示身份、纯 HTTP `JourneyClient` 和四种旅程验收。
 
-- [ ] 编写“上门揽收-送货上门、上门揽收-网点自取、网点自寄-送货上门、网点自寄-网点自取”四行矩阵。
-- [ ] 编写每个写接口的角色、网点、所有权、状态和幂等授权用例。
-- [ ] 通过 HTTP 辅助工具运行四条完整旅程，断言轨迹顺序、终态和不可见明文凭证。
-- [ ] 运行 `cd backend; uv run ruff check .; uv run mypy src; uv run pytest -q; uv run alembic downgrade base; uv run alembic upgrade head`。
-- [ ] 提交：`测试：完成阶段二物流核心验收`。
+- [x] 编写“上门揽收-送货上门、上门揽收-网点自取、网点自寄-送货上门、网点自寄-网点自取”四行矩阵。
+- [x] 编写每个写接口的角色、网点、所有权、状态和幂等授权用例。
+- [x] 通过 HTTP 辅助工具运行四条完整旅程，断言轨迹顺序、终态和不可见明文凭证。
+- [x] 运行 `cd backend; uv run ruff check .; uv run mypy src; uv run pytest -q; uv run alembic downgrade base; uv run alembic upgrade head`。
+- [x] 提交：`测试：完成阶段二物流核心验收`。
 
 ## 阶段二完成标准
 
-- [ ] 14 个小任务均已独立提交，提交信息为中文。
-- [ ] 五种角色的登录、角色权限和网点范围均通过真实 HTTP 测试。
-- [ ] 四种寄收组合均可从下单走到派送或自取终态。
-- [ ] 运单、任务、轨迹、审计和 Outbox 在事务边界内保持一致。
-- [ ] 并发接单、幂等重放、取件码安全和越权访问均有专项测试。
-- [ ] Ruff、mypy、pytest、迁移往返和 Compose HTTP 旅程全部通过。
+- [x] 14 个小任务均已独立提交，提交信息为中文。
+- [x] 五种角色的登录、角色权限和网点范围均通过真实 HTTP 测试。
+- [x] 四种寄收组合均可从下单走到派送或自取终态。
+- [x] 运单、任务、轨迹、审计和 Outbox 在事务边界内保持一致。
+- [x] 并发接单、幂等重放、取件码安全和越权访问均有专项测试。
+- [x] Ruff、mypy、pytest、迁移往返和 Compose HTTP 旅程全部通过。

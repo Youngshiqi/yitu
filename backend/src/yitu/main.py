@@ -11,7 +11,7 @@ from yitu.addresses.router import router as addresses_router
 from yitu.dispatch.router import router as dispatch_router
 from yitu.identity.router import router as identity_router
 from yitu.platform.config import get_settings
-from yitu.platform.database import dispose_database
+from yitu.platform.database import SessionFactory, dispose_database
 from yitu.platform.errors import AppError
 from yitu.platform.readiness import check_readiness
 from yitu.platform.schemas import ErrorResponse
@@ -33,9 +33,16 @@ class ReadinessResponse(BaseModel):
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    """在应用退出前主动释放异步数据库连接。"""
-    yield
-    await dispose_database()
+    """在演示环境准备固定身份，并在退出前释放异步数据库连接。"""
+    if get_settings().app_profile == "demo":
+        from yitu.demo.seed import seed_demo_users
+
+        async with SessionFactory() as session, session.begin():
+            await seed_demo_users(session)
+    try:
+        yield
+    finally:
+        await dispose_database()
 
 
 def create_app() -> FastAPI:

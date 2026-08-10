@@ -11,3 +11,17 @@
 5. 访问 `http://localhost:8000/api/v1/health`。
 
 数据库迁移由 API 容器启动时自动执行。停止服务使用 `docker compose down`；该命令保留数据库卷。
+
+## 本地演示身份
+
+Compose 会以演示模式启动并自动创建以下固定身份，统一密码为 `YituDemo2026!`：
+
+- 客户：`customer.demo`
+- 北京快递员：`courier.bijing.demo`
+- 上海快递员：`courier.shanghai.demo`
+- 北京网点员：`operator.beijing.demo`
+- 上海网点员：`operator.shanghai.demo`
+- 运营管理员：`operations.demo`
+- 系统管理员：`system.demo`
+
+网点自取的演示取件码固定为 `123456`，仅用于本地 demo 配置。正式环境必须关闭 demo 配置，并配置独立的取件码 pepper；接口和轨迹均不会返回取件码明文。
