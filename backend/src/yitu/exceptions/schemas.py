@@ -3,7 +3,12 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from yitu.exceptions.enums import ExceptionSeverity, ExceptionStatus, ExceptionType
+from yitu.exceptions.enums import (
+    ExceptionSeverity,
+    ExceptionStatus,
+    ExceptionType,
+    ResolutionCode,
+)
 
 
 class ExceptionCreate(BaseModel):
@@ -27,6 +32,27 @@ class ExceptionListFilters(BaseModel):
     blocks_fulfillment: bool | None = None
     limit: int = Field(default=50, ge=1, le=100)
     offset: int = Field(default=0, ge=0)
+
+
+class ExceptionAssign(BaseModel):
+    """分配异常处理责任。"""
+
+    assignee_id: UUID
+    responsible_station_id: UUID
+    reason: str = Field(min_length=1, max_length=1000)
+
+
+class ExceptionAction(BaseModel):
+    """异常状态动作请求。"""
+
+    reason: str | None = Field(default=None, max_length=1000)
+
+
+class ExceptionResolve(BaseModel):
+    """解决异常请求。"""
+
+    resolution_code: ResolutionCode
+    reason: str = Field(min_length=1, max_length=1000)
 
 
 class ExceptionView(BaseModel):

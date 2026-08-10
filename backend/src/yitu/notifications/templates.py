@@ -28,6 +28,14 @@ _TEMPLATES: dict[str, RenderedTemplate] = {
         title="运单异常已受理",
         content="运单 {shipment_no} 出现异常，正在处理中。",
     ),
+    "EXCEPTION_WAITING_FOR_CUSTOMER": RenderedTemplate(
+        title="需要补充异常信息",
+        content="运单 {shipment_no} 的异常处理需要补充信息，请关注后续提示。",
+    ),
+    "EXCEPTION_RESOLVED": RenderedTemplate(
+        title="运单异常已解决",
+        content="运单 {shipment_no} 的异常已解决。",
+    ),
 }
 
 

@@ -4,7 +4,12 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy import func, select, text
 
-from yitu.exceptions.enums import ExceptionSeverity, ExceptionStatus, ExceptionType
+from yitu.exceptions.enums import (
+    ExceptionSeverity,
+    ExceptionStatus,
+    ExceptionType,
+    ResolutionCode,
+)
 from yitu.identity.models import Role, Station, User
 from yitu.identity.security import hash_password
 from yitu.identity.service import CurrentUser
@@ -55,6 +60,28 @@ async def _seed_customer_shipment(owner_id: UUID | None = None) -> tuple[User, S
         await session.flush()
         session.add(shipment)
     return owner, shipment
+
+
+async def _seed_operator() -> tuple[User, Station]:
+    station = Station(
+        id=uuid4(),
+        code=f"CASE-OP-{uuid4().hex[:8]}",
+        name="异常处理测试网点",
+        district_code="310105",
+    )
+    operator = User(
+        id=uuid4(),
+        login_name=f"case.operator.{uuid4()}",
+        display_name="异常处理员",
+        password_hash=hash_password("密码"),
+        role=Role.STATION_OPERATOR,
+        station_id=station.id,
+    )
+    async with SessionFactory() as session, session.begin():
+        session.add(station)
+        await session.flush()
+        session.add(operator)
+    return operator, station
 
 
 async def test_customer_open_case_applies_policy_hold_outbox_and_idempotency() -> None:
@@ -183,3 +210,119 @@ async def test_list_cases_is_scoped_to_customer_shipments() -> None:
 
     assert total == 1
     assert [case.shipment_id for case in cases] == [shipment.id]
+
+
+async def test_operations_admin_can_drive_case_lifecycle() -> None:
+    from yitu.exceptions.schemas import (
+        ExceptionAssign,
+        ExceptionCreate,
+        ExceptionResolve,
+    )
+    from yitu.exceptions.service import ExceptionService
+
+    owner, shipment = await _seed_customer_shipment()
+    operator, station = await _seed_operator()
+    admin = CurrentUser(id=uuid4(), role=Role.OPERATIONS_ADMIN, station_id=None)
+    customer = CurrentUser(id=owner.id, role=Role.CUSTOMER, station_id=None)
+    async with SessionFactory() as session, session.begin():
+        case = await ExceptionService(session).open_case(
+            ExceptionCreate(
+                shipment_id=shipment.id,
+                case_type=ExceptionType.ADDRESS_ERROR,
+                description="地址缺少门牌号",
+            ),
+            customer,
+            "case:lifecycle:open",
+            "request-open",
+        )
+        assigned = await ExceptionService(session).assign_case(
+            case.id,
+            ExceptionAssign(
+                assignee_id=operator.id,
+                responsible_station_id=station.id,
+                reason="分配给目的网点处理",
+            ),
+            admin,
+            "case:lifecycle:assign",
+            "request-assign",
+        )
+        processing = await ExceptionService(session).apply_action(
+            case.id,
+            "start_processing",
+            admin,
+            "case:lifecycle:start",
+            "request-start",
+            reason="开始核实",
+        )
+        waiting = await ExceptionService(session).apply_action(
+            case.id,
+            "wait_for_customer",
+            admin,
+            "case:lifecycle:wait",
+            "request-wait",
+            reason="等待客户补充门牌号",
+        )
+        resumed = await ExceptionService(session).apply_action(
+            case.id,
+            "resume_processing",
+            admin,
+            "case:lifecycle:resume",
+            "request-resume",
+            reason="客户已补充",
+        )
+        resolved = await ExceptionService(session).resolve_case(
+            case.id,
+            ExceptionResolve(
+                resolution_code=ResolutionCode.INFORMATION_CORRECTED,
+                reason="地址已修正",
+            ),
+            admin,
+            "case:lifecycle:resolve",
+            "request-resolve",
+        )
+        closed = await ExceptionService(session).apply_action(
+            case.id,
+            "close",
+            admin,
+            "case:lifecycle:close",
+            "request-close",
+            reason="处理完成",
+        )
+
+    assert assigned.status == ExceptionStatus.ASSIGNED
+    assert assigned.assigned_to == operator.id
+    assert assigned.responsible_station_id == station.id
+    assert processing.status == ExceptionStatus.PROCESSING
+    assert waiting.status == ExceptionStatus.WAITING_FOR_CUSTOMER
+    assert resumed.status == ExceptionStatus.PROCESSING
+    assert resolved.status == ExceptionStatus.RESOLVED
+    assert closed.status == ExceptionStatus.CLOSED
+
+
+async def test_customer_cannot_drive_case_lifecycle() -> None:
+    from yitu.exceptions.schemas import ExceptionCreate
+    from yitu.exceptions.service import ExceptionService
+
+    owner, shipment = await _seed_customer_shipment()
+    customer = CurrentUser(id=owner.id, role=Role.CUSTOMER, station_id=None)
+    async with SessionFactory() as session, session.begin():
+        case = await ExceptionService(session).open_case(
+            ExceptionCreate(
+                shipment_id=shipment.id,
+                case_type=ExceptionType.ADDRESS_ERROR,
+                description="地址缺少门牌号",
+            ),
+            customer,
+            "case:forbidden:open",
+            "request-open",
+        )
+        with pytest.raises(AppError) as error:
+            await ExceptionService(session).apply_action(
+                case.id,
+                "start_processing",
+                customer,
+                "case:forbidden:start",
+                "request-start",
+            )
+
+    assert error.value.code == "FORBIDDEN_EXCEPTION_ACTION"
