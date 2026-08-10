@@ -45,7 +45,14 @@ class DispatchService:
         if accepted is None:
             raise AppError("TASK_ALREADY_ASSIGNED", "任务已被其他快递员接单", 409)
         shipment = await self._get_shipment(accepted.shipment_id)
-        await ShipmentTransitionService(self._session).transition(shipment, ShipmentStatus.PICKUP_ASSIGNED, actor, "assign_pickup", request_id)
+        task_type = CourierTaskType(accepted.task_type)
+        target = (
+            ShipmentStatus.PICKUP_ASSIGNED
+            if task_type is CourierTaskType.PICKUP
+            else ShipmentStatus.DELIVERY_ASSIGNED
+        )
+        action = "assign_pickup" if task_type is CourierTaskType.PICKUP else "assign_delivery"
+        await ShipmentTransitionService(self._session).transition(shipment, target, actor, action, request_id)
         return accepted
 
     async def confirm_pickup(self, task_id: UUID, actor: CurrentUser, request_id: str) -> CourierTask:

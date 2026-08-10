@@ -1,17 +1,31 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response, status
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yitu.dispatch.service import DispatchService
 from yitu.identity.service import CurrentUser, get_current_user
 from yitu.platform.database import get_session
+from yitu.shipments.credentials import LastMileService
 from yitu.shipments.linehaul import LinehaulResult, LinehaulService
 from yitu.shipments.service import ShipmentView
 
 router = APIRouter(prefix="/api/v1/dispatch", tags=["dispatch"])
 _session = Depends(get_session)
 _current_user = Depends(get_current_user)
+
+
+class DeliveryConfirmationRequest(BaseModel):
+    """派送签收时由快递员提交的签收人姓名。"""
+
+    signer_name: str
+
+
+class PickupVerificationRequest(BaseModel):
+    """网点核验时提交的一次性取件码。"""
+
+    code: str
 
 
 @router.post("/tasks/{task_id}/accept")
@@ -52,3 +66,31 @@ async def arrive_destination(shipment_id: UUID, user: CurrentUser = _current_use
     result = await LinehaulService(session).arrive_destination(shipment_id, user, f"arrive-destination:{shipment_id}")
     await session.commit()
     return result
+
+
+@router.post("/shipments/{shipment_id}/start-delivery", status_code=status.HTTP_204_NO_CONTENT)
+async def start_delivery(shipment_id: UUID, user: CurrentUser = _current_user, session: AsyncSession = _session) -> Response:
+    await LastMileService(session).start_delivery(shipment_id, user, f"start-delivery:{shipment_id}")
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/shipments/{shipment_id}/confirm-delivery", status_code=status.HTTP_204_NO_CONTENT)
+async def confirm_delivery(shipment_id: UUID, payload: DeliveryConfirmationRequest, user: CurrentUser = _current_user, session: AsyncSession = _session) -> Response:
+    await LastMileService(session).confirm_delivery(shipment_id, user, payload.signer_name, f"confirm-delivery:{shipment_id}")
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/shipments/{shipment_id}/issue-pickup-credential", status_code=status.HTTP_204_NO_CONTENT)
+async def issue_pickup_credential(shipment_id: UUID, user: CurrentUser = _current_user, session: AsyncSession = _session) -> Response:
+    await LastMileService(session).issue_pickup_credential(shipment_id, user, f"issue-pickup:{shipment_id}")
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post("/shipments/{shipment_id}/verify-station-pickup", status_code=status.HTTP_204_NO_CONTENT)
+async def verify_station_pickup(shipment_id: UUID, payload: PickupVerificationRequest, user: CurrentUser = _current_user, session: AsyncSession = _session) -> Response:
+    await LastMileService(session).verify_station_pickup(shipment_id, user, payload.code, f"verify-pickup:{shipment_id}")
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
