@@ -12,6 +12,8 @@ from yitu.exceptions.schemas import (
     ExceptionListFilters,
     ExceptionListResponse,
     ExceptionResolve,
+    ExceptionTaskReassign,
+    ExceptionTaskReassignmentView,
     ExceptionView,
 )
 from yitu.exceptions.service import ExceptionService
@@ -197,6 +199,26 @@ async def close_exception(
         user,
         session,
     )
+
+
+@router.post("/{case_id}/reassign-task", response_model=ExceptionTaskReassignmentView)
+async def reassign_task(
+    case_id: UUID,
+    command: ExceptionTaskReassign,
+    request: Request,
+    idempotency_key: str = Header(alias="Idempotency-Key"),
+    user: CurrentUser = _current_user,
+    session: AsyncSession = _session,
+) -> ExceptionTaskReassignmentView:
+    view = await ExceptionService(session).reassign_task(
+        case_id,
+        command,
+        user,
+        idempotency_key,
+        request.state.request_id,
+    )
+    await session.commit()
+    return view
 
 
 async def _apply_case_action(

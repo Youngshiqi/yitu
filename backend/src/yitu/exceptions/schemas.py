@@ -55,6 +55,28 @@ class ExceptionResolve(BaseModel):
     reason: str = Field(min_length=1, max_length=1000)
 
 
+class ExceptionTaskReassign(BaseModel):
+    """异常处理中重新分配履约任务。"""
+
+    old_task_id: UUID
+    reason: str = Field(min_length=1, max_length=1000)
+
+
+class ExceptionTaskReassignmentView(BaseModel):
+    """任务重派结果视图。"""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    case_id: UUID
+    old_task_id: UUID
+    new_task_id: UUID
+    reason: str
+    actor_id: UUID
+    idempotency_key: str
+    created_at: datetime
+
+
 class ExceptionView(BaseModel):
     """异常工单公开详情视图。"""
 

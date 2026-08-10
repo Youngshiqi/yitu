@@ -4,12 +4,14 @@ from uuid import UUID, uuid4
 import pytest
 from sqlalchemy import func, select, text
 
+from yitu.dispatch.models import CourierTask, CourierTaskStatus, CourierTaskType
 from yitu.exceptions.enums import (
     ExceptionSeverity,
     ExceptionStatus,
     ExceptionType,
     ResolutionCode,
 )
+from yitu.exceptions.models import ExceptionTaskReassignment
 from yitu.identity.models import Role, Station, User
 from yitu.identity.security import hash_password
 from yitu.identity.service import CurrentUser
@@ -326,3 +328,88 @@ async def test_customer_cannot_drive_case_lifecycle() -> None:
             )
 
     assert error.value.code == "FORBIDDEN_EXCEPTION_ACTION"
+
+
+async def test_operations_admin_can_reassign_open_task() -> None:
+    from yitu.exceptions.schemas import (
+        ExceptionAssign,
+        ExceptionCreate,
+        ExceptionTaskReassign,
+    )
+    from yitu.exceptions.service import ExceptionService
+
+    _owner, shipment = await _seed_customer_shipment()
+    operator, station = await _seed_operator()
+    courier = User(
+        id=uuid4(),
+        login_name=f"case.courier.{uuid4()}",
+        display_name="原快递员",
+        password_hash=hash_password("密码"),
+        role=Role.COURIER,
+        station_id=station.id,
+    )
+    admin_user = User(
+        id=uuid4(),
+        login_name=f"case.admin.{uuid4()}",
+        display_name="运营管理员",
+        password_hash=hash_password("密码"),
+        role=Role.OPERATIONS_ADMIN,
+    )
+    admin = CurrentUser(id=admin_user.id, role=Role.OPERATIONS_ADMIN, station_id=None)
+    async with SessionFactory() as session, session.begin():
+        session.add_all([courier, admin_user])
+        await session.flush()
+        old_task = CourierTask(
+            shipment_id=shipment.id,
+            station_id=station.id,
+            task_type=CourierTaskType.PICKUP,
+            status=CourierTaskStatus.ACCEPTED,
+            assignee_id=courier.id,
+        )
+        session.add(old_task)
+        await session.flush()
+        case = await ExceptionService(session).open_case(
+            ExceptionCreate(
+                shipment_id=shipment.id,
+                case_type=ExceptionType.PICKUP_FAILED,
+                description="揽收失败",
+            ),
+            admin,
+            "case:reassign:open",
+            "request-open",
+        )
+        await ExceptionService(session).assign_case(
+            case.id,
+            ExceptionAssign(
+                assignee_id=operator.id,
+                responsible_station_id=station.id,
+                reason="分配处理",
+            ),
+            admin,
+            "case:reassign:assign",
+            "request-assign",
+        )
+        reassignment = await ExceptionService(session).reassign_task(
+            case.id,
+            ExceptionTaskReassign(old_task_id=old_task.id, reason="原快递员无法继续处理"),
+            admin,
+            "case:reassign:task",
+            "request-reassign",
+        )
+
+    async with SessionFactory() as session:
+        saved_old = await session.get(CourierTask, old_task.id)
+        saved_new = await session.get(CourierTask, reassignment.new_task_id)
+        fact = await session.get(ExceptionTaskReassignment, reassignment.id)
+
+    assert saved_old is not None
+    assert saved_old.status == CourierTaskStatus.CANCELLED
+    assert saved_old.assignee_id == courier.id
+    assert saved_old.closed_reason == "原快递员无法继续处理"
+    assert saved_old.replaced_by_task_id == reassignment.new_task_id
+    assert saved_new is not None
+    assert saved_new.status == CourierTaskStatus.AVAILABLE
+    assert saved_new.assignee_id is None
+    assert fact is not None
+    assert fact.old_task_id == old_task.id
+    assert fact.new_task_id == saved_new.id

@@ -5,12 +5,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from yitu.dispatch.models import CourierTask, CourierTaskStatus
 from yitu.exceptions.enums import ExceptionSourceType, ExceptionStatus
-from yitu.exceptions.models import ExceptionCase
+from yitu.exceptions.models import ExceptionCase, ExceptionTaskReassignment
 from yitu.exceptions.schemas import (
     ExceptionAssign,
     ExceptionCreate,
     ExceptionListFilters,
     ExceptionResolve,
+    ExceptionTaskReassign,
+    ExceptionTaskReassignmentView,
     ExceptionView,
 )
 from yitu.exceptions.state_machine import (
@@ -246,6 +248,73 @@ class ExceptionService:
             operation,
         )
         return ExceptionView.model_validate(result.body)
+
+    async def reassign_task(
+        self,
+        case_id: UUID,
+        request: ExceptionTaskReassign,
+        actor: CurrentUser,
+        idempotency_key: str,
+        request_id: str,
+    ) -> ExceptionTaskReassignmentView:
+        request_hash = canonical_json_sha256(request.model_dump(mode="json"))
+
+        async def operation() -> IdempotencyResponse:
+            self._require_operations_admin(actor)
+            case = await self._lock_case(case_id)
+            if ExceptionStatus(case.status) not in {ExceptionStatus.ASSIGNED, ExceptionStatus.PROCESSING}:
+                raise AppError("TASK_NOT_REASSIGNABLE", "当前异常状态不允许重派任务", 409)
+            old_task = await self._session.scalar(
+                select(CourierTask)
+                .where(CourierTask.id == request.old_task_id)
+                .with_for_update()
+            )
+            if old_task is None or old_task.shipment_id != case.shipment_id:
+                raise AppError("TASK_NOT_REASSIGNABLE", "任务不属于该异常运单", 409)
+            if CourierTaskStatus(old_task.status) in {CourierTaskStatus.COMPLETED, CourierTaskStatus.CANCELLED}:
+                raise AppError("TASK_NOT_REASSIGNABLE", "任务已完成或已关闭", 409)
+            new_task = CourierTask(
+                shipment_id=old_task.shipment_id,
+                station_id=old_task.station_id,
+                task_type=old_task.task_type,
+                status=CourierTaskStatus.AVAILABLE,
+                assignee_id=None,
+            )
+            self._session.add(new_task)
+            await self._session.flush()
+            old_task.status = CourierTaskStatus.CANCELLED
+            old_task.closed_reason = request.reason
+            old_task.closed_at = Clock.now()
+            old_task.replaced_by_task_id = new_task.id
+            fact = ExceptionTaskReassignment(
+                case_id=case.id,
+                old_task_id=old_task.id,
+                new_task_id=new_task.id,
+                reason=request.reason,
+                actor_id=actor.id,
+                idempotency_key=idempotency_key,
+                created_at=Clock.now(),
+            )
+            self._session.add(fact)
+            await self._record_audit(
+                case,
+                actor,
+                "reassign_task",
+                ExceptionStatus(case.status),
+                request.reason,
+                request_id,
+            )
+            await self._session.flush()
+            view = ExceptionTaskReassignmentView.model_validate(fact)
+            return IdempotencyResponse(200, view.model_dump(mode="json"))
+
+        result = await IdempotencyService(self._session).execute(
+            f"exception:reassign-task:{case_id}:{request.old_task_id}:{actor.id}",
+            idempotency_key,
+            request_hash,
+            operation,
+        )
+        return ExceptionTaskReassignmentView.model_validate(result.body)
 
     async def _assert_manual_report_allowed(
         self,

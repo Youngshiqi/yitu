@@ -5,10 +5,11 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from tests.exceptions.test_cases import _seed_customer_shipment, _seed_operator
-from yitu.identity.models import Role
-from yitu.identity.security import create_access_token
+from yitu.dispatch.models import CourierTask, CourierTaskStatus, CourierTaskType
+from yitu.identity.models import Role, User
+from yitu.identity.security import create_access_token, hash_password
 from yitu.main import create_app
-from yitu.platform.database import dispose_database
+from yitu.platform.database import SessionFactory, dispose_database
 
 pytestmark = pytest.mark.asyncio(loop_scope="function")
 
@@ -165,3 +166,69 @@ async def test_operations_admin_can_drive_case_lifecycle_via_api() -> None:
     assert resolve.json()["status"] == "RESOLVED"
     assert close.status_code == 200, close.text
     assert close.json()["status"] == "CLOSED"
+
+
+async def test_operations_admin_can_reassign_task_via_api() -> None:
+    _owner, shipment = await _seed_customer_shipment()
+    operator, station = await _seed_operator()
+    admin_id = uuid4()
+    async with SessionFactory() as session, session.begin():
+        session.add(
+            User(
+                id=admin_id,
+                login_name=f"api.admin.{uuid4()}",
+                display_name="运营管理员",
+                password_hash=hash_password("密码"),
+                role=Role.OPERATIONS_ADMIN,
+            )
+        )
+        await session.flush()
+        old_task = CourierTask(
+            shipment_id=shipment.id,
+            station_id=station.id,
+            task_type=CourierTaskType.PICKUP,
+            status=CourierTaskStatus.ACCEPTED,
+            assignee_id=operator.id,
+        )
+        session.add(old_task)
+        await session.flush()
+        old_task_id = old_task.id
+
+    async with AsyncClient(
+        transport=ASGITransport(app=create_app()),
+        base_url="http://test",
+    ) as client:
+        admin_headers = _headers(admin_id, Role.OPERATIONS_ADMIN)
+        opened = await client.post(
+            "/api/v1/exceptions",
+            headers={**admin_headers, "Idempotency-Key": f"case-{uuid4()}"},
+            json={
+                "shipment_id": str(shipment.id),
+                "case_type": "PICKUP_FAILED",
+                "description": "揽收失败",
+            },
+        )
+        assert opened.status_code == 201, opened.text
+        case_id = opened.json()["id"]
+        assign = await client.post(
+            f"/api/v1/exceptions/{case_id}/assign",
+            headers={**admin_headers, "Idempotency-Key": f"assign-{uuid4()}"},
+            json={
+                "assignee_id": str(operator.id),
+                "responsible_station_id": str(station.id),
+                "reason": "分配处理",
+            },
+        )
+        assert assign.status_code == 200, assign.text
+        reassigned = await client.post(
+            f"/api/v1/exceptions/{case_id}/reassign-task",
+            headers={**admin_headers, "Idempotency-Key": f"reassign-{uuid4()}"},
+            json={
+                "old_task_id": str(old_task_id),
+                "reason": "原任务无法继续处理",
+            },
+        )
+
+    assert reassigned.status_code == 200, reassigned.text
+    assert reassigned.json()["old_task_id"] == str(old_task_id)
+    assert reassigned.json()["new_task_id"] != str(old_task_id)
