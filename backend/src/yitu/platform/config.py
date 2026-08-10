@@ -13,6 +13,8 @@ class Settings(BaseSettings):
         "postgresql+asyncpg://yitu:yitu_test@127.0.0.1:55432/yitu_test"
     )
     redis_url: str = "redis://127.0.0.1:6379/0"
+    jwt_secret: str = "仅供本地开发的默认密钥，请在生产环境替换"
+    jwt_expire_minutes: int = 30
 
     model_config = SettingsConfigDict(env_prefix="YITU_", env_file=".env", extra="ignore")
 
