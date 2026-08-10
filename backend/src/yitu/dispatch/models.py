@@ -1,0 +1,34 @@
+import enum
+from uuid import UUID, uuid4
+
+from sqlalchemy import ForeignKey, String
+from sqlalchemy.orm import Mapped, mapped_column
+
+from yitu.platform.models import Base
+
+
+class CourierTaskType(str, enum.Enum):
+    """快递员任务的业务类型。"""
+
+    PICKUP = "PICKUP"
+
+
+class CourierTaskStatus(str, enum.Enum):
+    """快递员任务的当前处理状态。"""
+
+    AVAILABLE = "AVAILABLE"
+    ACCEPTED = "ACCEPTED"
+    COMPLETED = "COMPLETED"
+
+
+class CourierTask(Base):
+    """保存由快递员执行的揽收任务。"""
+
+    __tablename__ = "courier_tasks"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    shipment_id: Mapped[UUID] = mapped_column(ForeignKey("shipments.id", ondelete="RESTRICT"), nullable=False)
+    station_id: Mapped[UUID] = mapped_column(ForeignKey("stations.id", ondelete="RESTRICT"), nullable=False)
+    task_type: Mapped[CourierTaskType] = mapped_column(String(32), nullable=False)
+    status: Mapped[CourierTaskStatus] = mapped_column(String(32), nullable=False)
+    assignee_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), nullable=True)
