@@ -17,6 +17,7 @@ from yitu.shipments.enums import ShipmentStatus
 from yitu.shipments.models import Shipment
 from yitu.shipments.schemas import CreateShipmentCommand
 from yitu.shipments.state_machine import transition
+from yitu.stations.service import match_station
 from yitu.tracking.models import TrackingEvent
 from yitu.tracking.service import append_tracking_event
 
@@ -64,13 +65,19 @@ class ShipmentApplicationService:
                 require_resource_owner(sender.owner_id, actor)
             if receiver is not None:
                 require_resource_owner(receiver.owner_id, actor)
+            origin_station_id = draft.origin_station_id
+            destination_station_id = draft.destination_station_id
+            if draft.pickup_method.value == "DOOR_PICKUP" and sender is not None:
+                origin_station_id = (await match_station(self._session, sender.district_code, "HOME_PICKUP")).id
+            if draft.delivery_method.value == "HOME_DELIVERY" and receiver is not None:
+                destination_station_id = (await match_station(self._session, receiver.district_code, "HOME_PICKUP")).id
             shipment = Shipment(
                 shipment_no=f"YT{uuid4().hex[:16].upper()}",
                 owner_id=actor.id,
                 sender_address_id=sender.id if sender is not None else None,
                 receiver_address_id=receiver.id if receiver is not None else None,
-                origin_station_id=draft.origin_station_id,
-                destination_station_id=draft.destination_station_id,
+                origin_station_id=origin_station_id,
+                destination_station_id=destination_station_id,
                 pickup_method=draft.pickup_method,
                 delivery_method=draft.delivery_method,
                 status=ShipmentStatus.PENDING_PAYMENT,

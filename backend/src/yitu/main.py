@@ -15,6 +15,7 @@ from yitu.platform.database import dispose_database
 from yitu.platform.errors import AppError
 from yitu.platform.readiness import check_readiness
 from yitu.platform.schemas import ErrorResponse
+from yitu.shipments.router import router as shipments_router
 from yitu.stations.router import router as stations_router
 
 
@@ -45,6 +46,7 @@ def create_app() -> FastAPI:
     app.include_router(stations_router)
     app.include_router(addresses_router)
     app.include_router(dispatch_router)
+    app.include_router(shipments_router)
 
     @app.middleware("http")
     async def attach_request_id(

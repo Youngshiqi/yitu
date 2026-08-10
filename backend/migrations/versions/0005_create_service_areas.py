@@ -90,6 +90,13 @@ def upgrade() -> None:
 def downgrade() -> None:
     """删除服务区域映射并清理本迁移写入的演示网点。"""
     op.drop_table("service_areas")
+    op.execute(
+        "UPDATE users SET station_id = NULL "
+        "WHERE station_id IN ("
+        "SELECT id FROM stations WHERE code IN "
+        "('BJS-001', 'SHS-001', 'GZS-001', 'SZS-001')"
+        ")"
+    )
     stations = sa.table("stations", sa.column("code", sa.String()))
     op.execute(
         stations.delete().where(

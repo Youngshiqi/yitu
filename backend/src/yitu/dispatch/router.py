@@ -2,8 +2,10 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Response, status
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from yitu.dispatch.models import CourierTask
 from yitu.dispatch.service import DispatchService
 from yitu.identity.service import CurrentUser, get_current_user
 from yitu.platform.database import get_session
@@ -73,6 +75,16 @@ async def start_delivery(shipment_id: UUID, user: CurrentUser = _current_user, s
     await LastMileService(session).start_delivery(shipment_id, user, f"start-delivery:{shipment_id}")
     await session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/tasks")
+async def list_tasks(shipment_id: UUID | None = None, user: CurrentUser = _current_user, session: AsyncSession = _session) -> list[dict[str, object]]:
+    del user
+    query = select(CourierTask)
+    if shipment_id is not None:
+        query = query.where(CourierTask.shipment_id == shipment_id)
+    tasks = list((await session.scalars(query)).all())
+    return [{"id": task.id, "shipment_id": task.shipment_id, "task_type": task.task_type, "status": task.status, "assignee_id": task.assignee_id} for task in tasks]
 
 
 @router.post("/shipments/{shipment_id}/confirm-delivery", status_code=status.HTTP_204_NO_CONTENT)
