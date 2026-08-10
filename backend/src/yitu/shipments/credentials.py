@@ -13,6 +13,7 @@ from yitu.identity.service import CurrentUser, require_station_scope
 from yitu.platform.clock import Clock
 from yitu.platform.config import get_settings
 from yitu.platform.errors import AppError
+from yitu.shipments.control import ShipmentControlService
 from yitu.shipments.credential_models import PickupCredential, ProofOfDelivery
 from yitu.shipments.enums import DeliveryMethod, ShipmentStatus
 from yitu.shipments.models import Shipment
@@ -33,7 +34,7 @@ class LastMileService:
             raise AppError("FORBIDDEN_TASK_OWNER", "仅派送任务负责人可开始派送", 403)
         if CourierTaskStatus(task.status) is not CourierTaskStatus.ACCEPTED:
             raise AppError("TASK_NOT_ACCEPTED", "派送任务尚未接单", 409)
-        shipment = await self._shipment(shipment_id)
+        shipment = await ShipmentControlService(self._session).lock_and_assert_fulfillment_allowed(shipment_id)
         await ShipmentTransitionService(self._session).transition(shipment, ShipmentStatus.OUT_FOR_DELIVERY, actor, "start_delivery", request_id)
         return shipment
 
@@ -44,7 +45,7 @@ class LastMileService:
         task = await self._delivery_task(shipment_id)
         if actor.role is not Role.COURIER or task.assignee_id != actor.id:
             raise AppError("FORBIDDEN_TASK_OWNER", "仅派送任务负责人可完成签收", 403)
-        shipment = await self._shipment(shipment_id)
+        shipment = await ShipmentControlService(self._session).lock_and_assert_fulfillment_allowed(shipment_id)
         await ShipmentTransitionService(self._session).transition(shipment, ShipmentStatus.DELIVERED, actor, "confirm_delivery", request_id)
         proof = ProofOfDelivery(shipment_id=shipment_id, delivery_method=DeliveryMethod.HOME_DELIVERY, signer_name=_mask_name(signer_name), verification_method="COURIER_CONFIRMATION", actor_id=actor.id, station_id=task.station_id, idempotency_key=request_id, created_at=Clock().now())
         self._session.add(proof)
@@ -54,6 +55,7 @@ class LastMileService:
 
     async def issue_pickup_credential(self, shipment_id: UUID, actor: CurrentUser, request_id: str, *, code: str | None = None, expires_in: timedelta = timedelta(minutes=30)) -> PickupCredential:
         shipment = await self._require_station_pickup(shipment_id, actor)
+        await ShipmentControlService(self._session).lock_and_assert_fulfillment_allowed(shipment.id)
         existing = await self._session.scalar(select(PickupCredential).where(PickupCredential.shipment_id == shipment_id, PickupCredential.consumed_at.is_(None)).order_by(PickupCredential.created_at.desc()))
         if existing is not None:
             existing.expires_at = Clock().now()
@@ -78,6 +80,7 @@ class LastMileService:
         if existing_proof is not None:
             return existing_proof
         shipment = await self._require_station_pickup(shipment_id, actor)
+        await ShipmentControlService(self._session).lock_and_assert_fulfillment_allowed(shipment.id)
         credential = await self._session.scalar(select(PickupCredential).where(PickupCredential.shipment_id == shipment_id, PickupCredential.consumed_at.is_(None)).order_by(PickupCredential.created_at.desc()))
         if credential is None:
             raise AppError("PICKUP_CREDENTIAL_NOT_FOUND", "取件凭证不存在", 409)

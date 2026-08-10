@@ -17,6 +17,7 @@ from yitu.platform.idempotency import (
 )
 from yitu.platform.outbox import OutboxService
 from yitu.pricing.models import QuoteSnapshot
+from yitu.shipments.control import ShipmentControlService
 from yitu.shipments.enums import PickupMethod, ShipmentStatus
 from yitu.shipments.models import Shipment
 from yitu.shipments.service import ShipmentTransitionService
@@ -35,21 +36,22 @@ class PaymentService:
             raise AppError("PAYMENT_AMOUNT_MISMATCH", "支付金额必须与报价一致", 409)
 
         async def operation() -> IdempotencyResponse:
-            if ShipmentStatus(shipment.status) is not ShipmentStatus.PENDING_PAYMENT:
+            locked_shipment = await ShipmentControlService(self._session).lock_and_assert_fulfillment_allowed(shipment.id)
+            if ShipmentStatus(locked_shipment.status) is not ShipmentStatus.PENDING_PAYMENT:
                 raise AppError("SHIPMENT_NOT_PAYABLE", "运单当前状态不可支付", 409)
-            transaction = PaymentTransaction(owner_id=actor.id, quote_id=quote.id, shipment_id=shipment.id, transaction_type="PAYMENT", status="SUCCEEDED", amount_cents=request.amount_cents, idempotency_key=idempotency_key, request_hash=canonical_json_sha256(request.model_dump(mode="json")), created_at=Clock.now())
+            transaction = PaymentTransaction(owner_id=actor.id, quote_id=quote.id, shipment_id=locked_shipment.id, transaction_type="PAYMENT", status="SUCCEEDED", amount_cents=request.amount_cents, idempotency_key=idempotency_key, request_hash=canonical_json_sha256(request.model_dump(mode="json")), created_at=Clock.now())
             self._session.add(transaction)
-            target = ShipmentStatus.PENDING_PICKUP if PickupMethod(shipment.pickup_method) is PickupMethod.DOOR_PICKUP else ShipmentStatus.WAITING_FOR_DROPOFF
-            await ShipmentTransitionService(self._session).transition(shipment, target, actor, "confirm_payment", f"payment:{shipment.id}")
+            target = ShipmentStatus.PENDING_PICKUP if PickupMethod(locked_shipment.pickup_method) is PickupMethod.DOOR_PICKUP else ShipmentStatus.WAITING_FOR_DROPOFF
+            await ShipmentTransitionService(self._session).transition(locked_shipment, target, actor, "confirm_payment", f"payment:{locked_shipment.id}")
             await OutboxService(self._session).append(
                 event_type="notification.requested",
-                business_id=f"shipment:{shipment.id}",
+                business_id=f"shipment:{locked_shipment.id}",
                 payload={
                     "recipient_id": str(actor.id),
                     "template_code": "PAYMENT_SUCCESS",
-                    "template_data": {"shipment_no": shipment.shipment_no},
+                    "template_data": {"shipment_no": locked_shipment.shipment_no},
                 },
-                idempotency_key=f"notification:{shipment.id}:payment-success",
+                idempotency_key=f"notification:{locked_shipment.id}:payment-success",
             )
             await self._session.flush()
             return IdempotencyResponse(201, PaymentTransactionView.model_validate(transaction).model_dump(mode="json"))

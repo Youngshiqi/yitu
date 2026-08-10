@@ -2,6 +2,7 @@ import asyncio
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import select
 
 from tests.dispatch.test_pickup import _shipment
 from yitu.dispatch.service import DispatchService
@@ -10,7 +11,8 @@ from yitu.identity.security import hash_password
 from yitu.identity.service import CurrentUser
 from yitu.platform.database import SessionFactory, dispose_database
 from yitu.platform.errors import AppError
-from yitu.shipments.enums import PickupMethod
+from yitu.shipments.enums import PickupMethod, ShipmentStatus
+from yitu.shipments.hold_models import ShipmentHold
 from yitu.shipments.models import Shipment
 
 pytestmark = pytest.mark.asyncio(loop_scope="function")
@@ -48,3 +50,59 @@ async def test_concurrent_couriers_only_one_can_accept_task() -> None:
         compete(second_courier, "accept-second"),
     )
     assert sorted(results) == ["TASK_ALREADY_ASSIGNED", "accepted"]
+
+
+async def test_concurrent_hold_and_task_acceptance_are_serialized() -> None:
+    from yitu.shipments.control import ShipmentControlService
+
+    shipment_id, station_id, courier, _operator = await _shipment(PickupMethod.DOOR_PICKUP)
+    source_id = uuid4()
+    async with SessionFactory() as session, session.begin():
+        shipment = await session.get(Shipment, shipment_id)
+        assert shipment is not None
+        task = await DispatchService(session).create_pickup_task(shipment, station_id)
+        task_id = task.id
+
+    async def accept_task() -> str:
+        try:
+            async with SessionFactory() as session, session.begin():
+                await DispatchService(session).accept_task(task_id, courier, "accept-vs-hold")
+            return "accepted"
+        except AppError as error:
+            return error.code
+
+    async def place_hold() -> str:
+        async with SessionFactory() as session, session.begin():
+            await ShipmentControlService(session).place_exception_hold(
+                shipment_id=shipment_id,
+                source_type="EXCEPTION_CASE",
+                source_id=source_id,
+                reason="并发异常冻结",
+                actor=courier,
+                idempotency_key=f"hold:{source_id}",
+            )
+        return "held"
+
+    results = await asyncio.gather(accept_task(), place_hold())
+
+    async with SessionFactory() as session:
+        shipment = await session.get(Shipment, shipment_id)
+        active_hold = await session.scalar(
+            select(ShipmentHold).where(
+                ShipmentHold.source_type == "EXCEPTION_CASE",
+                ShipmentHold.source_id == source_id,
+            )
+        )
+
+    assert shipment is not None
+    assert active_hold is not None
+    assert sorted(results) in [
+        ["SHIPMENT_FULFILLMENT_BLOCKED", "held"],
+        ["accepted", "held"],
+    ]
+    if "accepted" in results:
+        assert shipment.status == ShipmentStatus.PICKUP_ASSIGNED
+        assert active_hold.frozen_status == ShipmentStatus.PICKUP_ASSIGNED
+    else:
+        assert shipment.status == ShipmentStatus.PENDING_PICKUP
+        assert active_hold.frozen_status == ShipmentStatus.PENDING_PICKUP

@@ -7,6 +7,7 @@ from yitu.dispatch.models import CourierTask, CourierTaskStatus, CourierTaskType
 from yitu.identity.models import Role
 from yitu.identity.service import CurrentUser, require_station_scope
 from yitu.platform.errors import AppError
+from yitu.shipments.control import ShipmentControlService
 from yitu.shipments.enums import PickupMethod, ShipmentStatus
 from yitu.shipments.models import Shipment
 from yitu.shipments.service import ShipmentTransitionService
@@ -33,6 +34,7 @@ class DispatchService:
             raise AppError("FORBIDDEN_ROLE", "角色权限不足", 403)
         task = await self._get_task(task_id)
         require_station_scope(task.station_id, actor)
+        await ShipmentControlService(self._session).lock_and_assert_fulfillment_allowed(task.shipment_id)
         accepted = await self._session.scalar(
             update(CourierTask)
             .where(
@@ -62,7 +64,7 @@ class DispatchService:
             raise AppError("FORBIDDEN_TASK_OWNER", "仅任务负责人可确认揽收", 403)
         if CourierTaskStatus(task.status) is not CourierTaskStatus.ACCEPTED:
             raise AppError("TASK_NOT_ACCEPTED", "任务尚未接单", 409)
-        shipment = await self._get_shipment(task.shipment_id)
+        shipment = await ShipmentControlService(self._session).lock_and_assert_fulfillment_allowed(task.shipment_id)
         task.status = CourierTaskStatus.COMPLETED
         await ShipmentTransitionService(self._session).transition(shipment, ShipmentStatus.PICKED_UP, actor, "confirm_pickup", request_id)
         return task
@@ -70,12 +72,14 @@ class DispatchService:
     async def accept_dropoff(self, shipment_id: UUID, actor: CurrentUser, request_id: str) -> Shipment:
         """由始发网点验收客户自寄包裹。"""
         shipment = await self._require_origin_operator(shipment_id, actor)
+        await ShipmentControlService(self._session).lock_and_assert_fulfillment_allowed(shipment.id)
         await ShipmentTransitionService(self._session).transition(shipment, ShipmentStatus.AT_ORIGIN_STATION, actor, "accept_dropoff", request_id)
         return shipment
 
     async def confirm_origin_arrival(self, shipment_id: UUID, actor: CurrentUser, request_id: str) -> Shipment:
         """由始发网点确认已揽收包裹到站。"""
         shipment = await self._require_origin_operator(shipment_id, actor)
+        await ShipmentControlService(self._session).lock_and_assert_fulfillment_allowed(shipment.id)
         await ShipmentTransitionService(self._session).transition(shipment, ShipmentStatus.AT_ORIGIN_STATION, actor, "confirm_origin_arrival", request_id)
         return shipment
 
