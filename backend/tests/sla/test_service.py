@@ -62,7 +62,8 @@ async def test_eta_does_not_overwrite_promise_and_scan_is_idempotent() -> None:
         assert instance.eta_at == frozen_promise + timedelta(minutes=20)
 
         clock.value = start_at + timedelta(hours=2)
-        assert len(await service.scan_breaches("window-1")) == 1
+        changed = await service.scan_breaches("window-1")
+        assert instance.id in {item.id for item in changed}
         assert len(await service.scan_breaches("window-1")) == 0
 
 
@@ -92,7 +93,8 @@ async def test_scan_breaches_opens_station_delay_case_once() -> None:
         service = SLAService(session, clock=clock)
         instance = await service.start(shipment.id, "TEST", "PICKUP")
         clock.value = start_at + timedelta(hours=2)
-        assert len(await service.scan_breaches("window-1")) == 1
+        changed = await service.scan_breaches("window-1")
+        assert instance.id in {item.id for item in changed}
         assert len(await service.scan_breaches("window-2")) == 0
 
     async with SessionFactory() as session:

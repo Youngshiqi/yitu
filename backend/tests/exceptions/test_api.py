@@ -99,6 +99,16 @@ async def test_operations_admin_can_drive_case_lifecycle_via_api() -> None:
     owner, shipment = await _seed_customer_shipment()
     operator, station = await _seed_operator()
     admin_id = uuid4()
+    async with SessionFactory() as session, session.begin():
+        session.add(
+            User(
+                id=admin_id,
+                login_name=f"api.lifecycle.admin.{uuid4()}",
+                display_name="生命周期运营管理员",
+                password_hash=hash_password("密码"),
+                role=Role.OPERATIONS_ADMIN,
+            )
+        )
     async with AsyncClient(
         transport=ASGITransport(app=create_app()),
         base_url="http://test",
@@ -148,6 +158,14 @@ async def test_operations_admin_can_drive_case_lifecycle_via_api() -> None:
                 "reason": "地址已修正",
             },
         )
+        resume_shipment = await client.post(
+            f"/api/v1/shipments/{shipment.id}/resume",
+            headers={**admin_headers, "Idempotency-Key": f"resume-shipment-{uuid4()}"},
+            json={
+                "target_status": "PENDING_PICKUP",
+                "reason": "确认地址已修正，可恢复履约",
+            },
+        )
         close = await client.post(
             f"/api/v1/exceptions/{case_id}/close",
             headers={**admin_headers, "Idempotency-Key": f"close-{uuid4()}"},
@@ -164,6 +182,8 @@ async def test_operations_admin_can_drive_case_lifecycle_via_api() -> None:
     assert resume.json()["status"] == "PROCESSING"
     assert resolve.status_code == 200, resolve.text
     assert resolve.json()["status"] == "RESOLVED"
+    assert resume_shipment.status_code == 200, resume_shipment.text
+    assert resume_shipment.json()["status"] == "PENDING_PICKUP"
     assert close.status_code == 200, close.text
     assert close.json()["status"] == "CLOSED"
 

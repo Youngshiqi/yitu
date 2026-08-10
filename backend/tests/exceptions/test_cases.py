@@ -221,12 +221,23 @@ async def test_operations_admin_can_drive_case_lifecycle() -> None:
         ExceptionResolve,
     )
     from yitu.exceptions.service import ExceptionService
+    from yitu.shipments.schemas import ShipmentResumeCommand
 
     owner, shipment = await _seed_customer_shipment()
     operator, station = await _seed_operator()
     admin = CurrentUser(id=uuid4(), role=Role.OPERATIONS_ADMIN, station_id=None)
     customer = CurrentUser(id=owner.id, role=Role.CUSTOMER, station_id=None)
     async with SessionFactory() as session, session.begin():
+        session.add(
+            User(
+                id=admin.id,
+                login_name=f"case.admin.lifecycle.{uuid4()}",
+                display_name="生命周期运营管理员",
+                password_hash=hash_password("密码"),
+                role=Role.OPERATIONS_ADMIN,
+            )
+        )
+        await session.flush()
         case = await ExceptionService(session).open_case(
             ExceptionCreate(
                 shipment_id=shipment.id,
@@ -282,6 +293,16 @@ async def test_operations_admin_can_drive_case_lifecycle() -> None:
             "case:lifecycle:resolve",
             "request-resolve",
         )
+        resumed_shipment = await ExceptionService(session).resume_shipment(
+            shipment.id,
+            ShipmentResumeCommand(
+                target_status=ShipmentStatus.PENDING_PICKUP,
+                reason="确认地址已修正，可恢复履约",
+            ),
+            admin,
+            "case:lifecycle:resume-shipment",
+            "request-resume-shipment",
+        )
         closed = await ExceptionService(session).apply_action(
             case.id,
             "close",
@@ -298,6 +319,7 @@ async def test_operations_admin_can_drive_case_lifecycle() -> None:
     assert waiting.status == ExceptionStatus.WAITING_FOR_CUSTOMER
     assert resumed.status == ExceptionStatus.PROCESSING
     assert resolved.status == ExceptionStatus.RESOLVED
+    assert resumed_shipment.status == ShipmentStatus.PENDING_PICKUP
     assert closed.status == ExceptionStatus.CLOSED
 
 

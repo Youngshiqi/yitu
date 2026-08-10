@@ -40,6 +40,10 @@ _TEMPLATES: dict[str, RenderedTemplate] = {
         title="运单异常已解决",
         content="运单 {shipment_no} 的异常已解决。",
     ),
+    "SHIPMENT_RESUMED": RenderedTemplate(
+        title="运单履约已恢复",
+        content="运单 {shipment_no} 的履约已恢复。",
+    ),
 }
 
 

@@ -33,7 +33,13 @@ from yitu.platform.idempotency import (
 )
 from yitu.platform.outbox import OutboxService
 from yitu.shipments.control import ShipmentControlService
+from yitu.shipments.enums import ShipmentStatus
+from yitu.shipments.hold_models import ShipmentHold
 from yitu.shipments.models import Shipment
+from yitu.shipments.schemas import ShipmentResumeCommand, ShipmentResumeView
+from yitu.sla.models import SLAPause
+from yitu.sla.service import SLAService
+from yitu.tracking.service import append_tracking_event
 
 
 class ExceptionService:
@@ -196,6 +202,8 @@ class ExceptionService:
             case = await self._lock_case(case_id)
             self._assert_can_manage(case, actor)
             previous = ExceptionStatus(case.status)
+            if action == "close" and await self._case_has_active_hold(case.id):
+                raise AppError("RESUME_PRECONDITION_FAILED", "阻断异常恢复履约前不能关闭", 409)
             case.status = transition(previous, action)
             now = Clock.now()
             if case.status is ExceptionStatus.CLOSED:
@@ -316,6 +324,103 @@ class ExceptionService:
         )
         return ExceptionTaskReassignmentView.model_validate(result.body)
 
+    async def resume_shipment(
+        self,
+        shipment_id: UUID,
+        request: ShipmentResumeCommand,
+        actor: CurrentUser,
+        idempotency_key: str,
+        request_id: str,
+    ) -> ShipmentResumeView:
+        """显式释放异常 Hold，并只恢复对应异常来源的 SLA 暂停。"""
+        request_hash = canonical_json_sha256(request.model_dump(mode="json"))
+
+        async def operation() -> IdempotencyResponse:
+            self._require_operations_admin(actor)
+            shipment = await ShipmentControlService(self._session).lock_shipment(shipment_id)
+            holds = await self._active_holds_for_update(shipment_id)
+            if not holds:
+                raise AppError("SHIPMENT_NOT_BLOCKED", "运单没有活动履约冻结", 409)
+            frozen_statuses = {ShipmentStatus(hold.frozen_status) for hold in holds}
+            if len(frozen_statuses) != 1:
+                raise AppError("RESUME_PRECONDITION_FAILED", "活动冻结的原始履约阶段不一致", 409)
+            frozen_status = next(iter(frozen_statuses))
+            if request.target_status is not frozen_status:
+                raise AppError("RESUME_TARGET_MISMATCH", "恢复目标阶段与冻结阶段不匹配", 409)
+            source_ids = [hold.source_id for hold in holds if hold.source_type == "EXCEPTION_CASE"]
+            if len(source_ids) != len(holds):
+                raise AppError("RESUME_PRECONDITION_FAILED", "存在不支持的履约冻结来源", 409)
+            cases = await self._blocking_cases_for_update(source_ids)
+            if len(cases) != len(source_ids) or any(not case.blocks_fulfillment for case in cases):
+                raise AppError("RESUME_PRECONDITION_FAILED", "履约冻结缺少对应阻断异常", 409)
+            if any(ExceptionStatus(case.status) is not ExceptionStatus.RESOLVED for case in cases):
+                raise AppError("UNRESOLVED_BLOCKING_CASES", "仍有阻断异常未解决", 409)
+            await ShipmentControlService(self._session).assert_resume_preconditions(
+                shipment,
+                frozen_status,
+            )
+            active_pauses = await self._active_sla_pauses_for_sources(source_ids)
+            sla_service = SLAService(self._session)
+            for pause in active_pauses:
+                if pause.source_id is None:
+                    continue
+                await sla_service.resume_for_source(
+                    pause.instance_id,
+                    source_type="EXCEPTION_CASE",
+                    source_id=pause.source_id,
+                    idempotency_key=f"sla:resume:{pause.source_id}:{idempotency_key}",
+                )
+            released = await ShipmentControlService(self._session).release_exception_holds(
+                shipment_id=shipment_id,
+                source_type="EXCEPTION_CASE",
+                source_ids=source_ids,
+                actor=actor,
+                idempotency_key=idempotency_key,
+            )
+            for case in cases:
+                case.blocks_fulfillment = False
+            await append_tracking_event(
+                self._session,
+                shipment_id,
+                "SHIPMENT_RESUMED",
+                "履约已恢复",
+                f"tracking:shipment:{shipment_id}:resumed:{idempotency_key}",
+            )
+            await AuditService(self._session).record(
+                actor=str(actor.id),
+                action="shipment.resume",
+                resource=f"shipment:{shipment_id}",
+                before_summary={"status": frozen_status.value, "active_hold_count": len(holds)},
+                after_summary={"status": ShipmentStatus(shipment.status).value, "released_hold_count": len(released)},
+                reason=request.reason,
+                request_id=request_id,
+            )
+            await OutboxService(self._session).append(
+                event_type="notification.requested",
+                business_id=f"shipment:{shipment_id}:resumed",
+                payload={
+                    "recipient_id": str(shipment.owner_id),
+                    "template_code": "SHIPMENT_RESUMED",
+                    "template_data": {"shipment_no": shipment.shipment_no},
+                },
+                idempotency_key=f"notification:shipment:{shipment_id}:resumed:{idempotency_key}",
+            )
+            await self._session.flush()
+            view = ShipmentResumeView(
+                shipment_id=shipment.id,
+                status=ShipmentStatus(shipment.status),
+                resumed_hold_count=len(released),
+            )
+            return IdempotencyResponse(200, view.model_dump(mode="json"))
+
+        result = await IdempotencyService(self._session).execute(
+            f"shipment:resume:{shipment_id}:{actor.id}",
+            idempotency_key,
+            request_hash,
+            operation,
+        )
+        return ShipmentResumeView.model_validate(result.body)
+
     async def _assert_manual_report_allowed(
         self,
         request: ExceptionCreate,
@@ -365,6 +470,51 @@ class ExceptionService:
             raise AppError("EXCEPTION_CASE_NOT_FOUND", "异常工单不存在", 404)
         await ShipmentControlService(self._session).lock_shipment(case.shipment_id)
         return case
+
+    async def _active_holds_for_update(self, shipment_id: UUID) -> list[ShipmentHold]:
+        return list(
+            await self._session.scalars(
+                select(ShipmentHold)
+                .where(
+                    ShipmentHold.shipment_id == shipment_id,
+                    ShipmentHold.active.is_(True),
+                )
+                .with_for_update()
+            )
+        )
+
+    async def _blocking_cases_for_update(self, case_ids: list[UUID]) -> list[ExceptionCase]:
+        return list(
+            await self._session.scalars(
+                select(ExceptionCase)
+                .where(ExceptionCase.id.in_(case_ids))
+                .with_for_update()
+            )
+        )
+
+    async def _active_sla_pauses_for_sources(self, source_ids: list[UUID]) -> list[SLAPause]:
+        return list(
+            await self._session.scalars(
+                select(SLAPause).where(
+                    SLAPause.source_type == "EXCEPTION_CASE",
+                    SLAPause.source_id.in_(source_ids),
+                    SLAPause.ended_at.is_(None),
+                )
+            )
+        )
+
+    async def _case_has_active_hold(self, case_id: UUID) -> bool:
+        return bool(
+            await self._session.scalar(
+                select(
+                    exists().where(
+                        ShipmentHold.source_type == "EXCEPTION_CASE",
+                        ShipmentHold.source_id == case_id,
+                        ShipmentHold.active.is_(True),
+                    )
+                )
+            )
+        )
 
     @staticmethod
     def _require_operations_admin(actor: CurrentUser) -> None:

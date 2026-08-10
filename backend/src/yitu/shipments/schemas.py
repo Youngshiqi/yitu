@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from yitu.shipments.enums import DeliveryMethod, PickupMethod, ShipmentStatus
 
@@ -44,3 +44,18 @@ class CreateShipmentCommand(BaseModel):
     model_config = ConfigDict(extra="forbid")
     draft: ShipmentDraft
     status: ShipmentStatus = ShipmentStatus.PENDING_PAYMENT
+
+
+class ShipmentResumeCommand(BaseModel):
+    """显式恢复被冻结履约的请求。"""
+
+    target_status: ShipmentStatus
+    reason: str = Field(min_length=1, max_length=1000)
+
+
+class ShipmentResumeView(BaseModel):
+    """恢复履约后的稳定响应。"""
+
+    shipment_id: UUID
+    status: ShipmentStatus
+    resumed_hold_count: int

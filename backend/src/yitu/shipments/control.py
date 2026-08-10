@@ -4,11 +4,14 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from yitu.dispatch.models import CourierTask, CourierTaskStatus, CourierTaskType
 from yitu.identity.service import CurrentUser
 from yitu.platform.clock import Clock
 from yitu.platform.errors import AppError
+from yitu.shipments.enums import ShipmentStatus
 from yitu.shipments.hold_models import ShipmentHold
 from yitu.shipments.models import Shipment
+from yitu.shipments.transport_models import TransportLeg, TransportLegStatus
 
 
 class ShipmentControlService:
@@ -109,3 +112,44 @@ class ShipmentControlService:
             hold.release_idempotency_key = idempotency_key
         await self._session.flush()
         return holds
+
+    async def assert_resume_preconditions(
+        self,
+        shipment: Shipment,
+        target_status: ShipmentStatus,
+    ) -> None:
+        """校验恢复目标阶段仍有必要前置事实；不自动修复履约状态。"""
+        if ShipmentStatus(shipment.status) is not target_status:
+            raise AppError("RESUME_TARGET_MISMATCH", "运单当前阶段与恢复目标不一致", 409)
+        if target_status is ShipmentStatus.PICKUP_ASSIGNED:
+            await self._require_active_task(shipment.id, CourierTaskType.PICKUP)
+        elif target_status in {ShipmentStatus.DELIVERY_ASSIGNED, ShipmentStatus.OUT_FOR_DELIVERY}:
+            await self._require_active_task(shipment.id, CourierTaskType.DELIVERY)
+        elif target_status is ShipmentStatus.IN_LINEHAUL:
+            active_leg = await self._session.scalar(
+                select(TransportLeg.id)
+                .where(
+                    TransportLeg.shipment_id == shipment.id,
+                    TransportLeg.status == TransportLegStatus.IN_TRANSIT,
+                )
+                .limit(1)
+            )
+            if active_leg is None:
+                raise AppError("RESUME_PRECONDITION_FAILED", "缺少进行中的干线运输段", 409)
+
+    async def _require_active_task(
+        self,
+        shipment_id: UUID,
+        task_type: CourierTaskType,
+    ) -> None:
+        task_id = await self._session.scalar(
+            select(CourierTask.id)
+            .where(
+                CourierTask.shipment_id == shipment_id,
+                CourierTask.task_type == task_type,
+                CourierTask.status.in_([CourierTaskStatus.AVAILABLE, CourierTaskStatus.ACCEPTED]),
+            )
+            .limit(1)
+        )
+        if task_id is None:
+            raise AppError("RESUME_PRECONDITION_FAILED", "缺少有效履约任务", 409)

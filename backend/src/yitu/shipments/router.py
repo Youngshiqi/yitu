@@ -1,16 +1,21 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header, Response, status
+from fastapi import APIRouter, Depends, Header, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yitu.dispatch.service import DispatchService
+from yitu.exceptions.service import ExceptionService
 from yitu.identity.models import Role
 from yitu.identity.service import CurrentUser, get_current_user, require_resource_owner
 from yitu.platform.database import get_session
 from yitu.platform.errors import AppError
 from yitu.shipments.enums import PickupMethod, ShipmentStatus
 from yitu.shipments.models import Shipment
-from yitu.shipments.schemas import CreateShipmentCommand
+from yitu.shipments.schemas import (
+    CreateShipmentCommand,
+    ShipmentResumeCommand,
+    ShipmentResumeView,
+)
 from yitu.shipments.service import (
     ShipmentApplicationService,
     ShipmentTransitionService,
@@ -74,3 +79,23 @@ async def get_tracking(shipment_id: UUID, user: CurrentUser = _current_user, ses
         raise AppError("SHIPMENT_NOT_FOUND", "运单不存在", 404)
     require_resource_owner(shipment.owner_id, user)
     return [TrackingEventView.model_validate(event) for event in await list_tracking_events(session, shipment_id)]
+
+
+@router.post("/{shipment_id}/resume", response_model=ShipmentResumeView)
+async def resume_shipment(
+    shipment_id: UUID,
+    command: ShipmentResumeCommand,
+    request: Request,
+    idempotency_key: str = Header(alias="Idempotency-Key"),
+    user: CurrentUser = _current_user,
+    session: AsyncSession = _session,
+) -> ShipmentResumeView:
+    view = await ExceptionService(session).resume_shipment(
+        shipment_id,
+        command,
+        user,
+        idempotency_key,
+        request.state.request_id,
+    )
+    await session.commit()
+    return view
