@@ -19,6 +19,7 @@ from yitu.platform.errors import AppError
 from yitu.platform.readiness import check_readiness
 from yitu.platform.schemas import ErrorResponse
 from yitu.pricing.router import router as pricing_router
+from yitu.returns.router import router as returns_router
 from yitu.shipments.router import router as shipments_router
 from yitu.sla.router import router as sla_router
 from yitu.stations.router import router as stations_router
@@ -62,6 +63,7 @@ def create_app() -> FastAPI:
     app.include_router(shipments_router)
     app.include_router(pricing_router)
     app.include_router(payments_router)
+    app.include_router(returns_router)
     app.include_router(notifications_router)
     app.include_router(sla_router)
 

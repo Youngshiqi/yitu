@@ -15,6 +15,7 @@ from yitu.payments import models as _payment_models  # noqa: F401
 from yitu.platform.config import get_settings
 from yitu.platform.models import Base
 from yitu.pricing import models as _pricing_models  # noqa: F401
+from yitu.returns import models as _return_models  # noqa: F401
 from yitu.shipments import credential_models as _credential_models  # noqa: F401
 from yitu.shipments import hold_models as _hold_models  # noqa: F401
 from yitu.shipments import models as _shipment_models  # noqa: F401

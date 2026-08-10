@@ -11,12 +11,15 @@ _TRANSITIONS: Mapping[ShipmentStatus, frozenset[ShipmentStatus]] = {
     ShipmentStatus.PICKED_UP: frozenset({ShipmentStatus.AT_ORIGIN_STATION}),
     ShipmentStatus.AT_ORIGIN_STATION: frozenset({ShipmentStatus.IN_LINEHAUL}),
     ShipmentStatus.IN_LINEHAUL: frozenset({ShipmentStatus.AT_DESTINATION_STATION}),
-    ShipmentStatus.AT_DESTINATION_STATION: frozenset({ShipmentStatus.DELIVERY_ASSIGNED, ShipmentStatus.WAITING_FOR_RECIPIENT_PICKUP}),
-    ShipmentStatus.DELIVERY_ASSIGNED: frozenset({ShipmentStatus.OUT_FOR_DELIVERY}),
-    ShipmentStatus.OUT_FOR_DELIVERY: frozenset({ShipmentStatus.DELIVERED}),
+    ShipmentStatus.AT_DESTINATION_STATION: frozenset({ShipmentStatus.DELIVERY_ASSIGNED, ShipmentStatus.WAITING_FOR_RECIPIENT_PICKUP, ShipmentStatus.RETURN_APPROVED}),
+    ShipmentStatus.DELIVERY_ASSIGNED: frozenset({ShipmentStatus.OUT_FOR_DELIVERY, ShipmentStatus.WAITING_FOR_RECIPIENT_PICKUP, ShipmentStatus.RETURN_APPROVED}),
+    ShipmentStatus.OUT_FOR_DELIVERY: frozenset({ShipmentStatus.DELIVERED, ShipmentStatus.DELIVERY_ASSIGNED, ShipmentStatus.WAITING_FOR_RECIPIENT_PICKUP, ShipmentStatus.RETURN_APPROVED}),
     ShipmentStatus.WAITING_FOR_RECIPIENT_PICKUP: frozenset({ShipmentStatus.DELIVERED}),
     ShipmentStatus.DELIVERED: frozenset(),
     ShipmentStatus.CANCELLED: frozenset(),
+    ShipmentStatus.RETURN_APPROVED: frozenset({ShipmentStatus.IN_RETURN}),
+    ShipmentStatus.IN_RETURN: frozenset({ShipmentStatus.RETURNED}),
+    ShipmentStatus.RETURNED: frozenset(),
 }
 
 _ACTIONS: Mapping[ShipmentStatus, frozenset[str]] = {
@@ -27,12 +30,15 @@ _ACTIONS: Mapping[ShipmentStatus, frozenset[str]] = {
     ShipmentStatus.PICKED_UP: frozenset({"confirm_origin_arrival"}),
     ShipmentStatus.AT_ORIGIN_STATION: frozenset({"dispatch_linehaul"}),
     ShipmentStatus.IN_LINEHAUL: frozenset({"arrive_destination"}),
-    ShipmentStatus.AT_DESTINATION_STATION: frozenset({"assign_delivery", "issue_pickup_credential"}),
-    ShipmentStatus.DELIVERY_ASSIGNED: frozenset({"start_delivery"}),
-    ShipmentStatus.OUT_FOR_DELIVERY: frozenset({"confirm_delivery"}),
+    ShipmentStatus.AT_DESTINATION_STATION: frozenset({"assign_delivery", "issue_pickup_credential", "approve_return"}),
+    ShipmentStatus.DELIVERY_ASSIGNED: frozenset({"start_delivery", "convert_to_pickup", "approve_return"}),
+    ShipmentStatus.OUT_FOR_DELIVERY: frozenset({"confirm_delivery", "redeliver", "convert_to_pickup", "approve_return"}),
     ShipmentStatus.WAITING_FOR_RECIPIENT_PICKUP: frozenset({"verify_station_pickup"}),
     ShipmentStatus.DELIVERED: frozenset(),
     ShipmentStatus.CANCELLED: frozenset(),
+    ShipmentStatus.RETURN_APPROVED: frozenset({"advance_return"}),
+    ShipmentStatus.IN_RETURN: frozenset({"advance_return"}),
+    ShipmentStatus.RETURNED: frozenset(),
 }
 
 

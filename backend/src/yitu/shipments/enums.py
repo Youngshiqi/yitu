@@ -17,6 +17,9 @@ class ShipmentStatus(str, enum.Enum):
     WAITING_FOR_RECIPIENT_PICKUP = "WAITING_FOR_RECIPIENT_PICKUP"
     DELIVERED = "DELIVERED"
     CANCELLED = "CANCELLED"
+    RETURN_APPROVED = "RETURN_APPROVED"
+    IN_RETURN = "IN_RETURN"
+    RETURNED = "RETURNED"
 
 
 class PickupMethod(str, enum.Enum):
