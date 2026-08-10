@@ -77,6 +77,47 @@ class SLAService:
         await self.session.flush()
         return instance
 
+    async def pause_for_source(
+        self,
+        instance_id: UUID,
+        *,
+        reason: str,
+        reason_code: str,
+        source_type: str,
+        source_id: UUID,
+        actor_id: UUID,
+        idempotency_key: str,
+    ) -> SLAInstance:
+        """按业务来源暂停 SLA；同一来源重复调用保持幂等。"""
+        instance = await self._get_instance(instance_id)
+        existing = await self.session.scalar(
+            select(SLAPause).where(
+                SLAPause.instance_id == instance.id,
+                SLAPause.source_type == source_type,
+                SLAPause.source_id == source_id,
+                SLAPause.ended_at.is_(None),
+            )
+        )
+        if existing is not None:
+            return instance
+        if instance.status not in {"RUNNING", "PAUSED"}:
+            raise ValueError("当前 SLA 不可暂停")
+        instance.status = "PAUSED"
+        self.session.add(
+            SLAPause(
+                instance_id=instance.id,
+                reason=reason,
+                reason_code=reason_code,
+                source_type=source_type,
+                source_id=source_id,
+                actor_id=actor_id,
+                pause_idempotency_key=idempotency_key,
+                started_at=self.clock.now(),
+            )
+        )
+        await self.session.flush()
+        return instance
+
     async def resume(self, instance_id: UUID) -> SLAInstance:
         """恢复 SLA 并按暂停时间延后冻结的承诺截止时间。"""
         instance = await self._get_instance(instance_id)
@@ -106,6 +147,40 @@ class SLAService:
         else:
             instance.promised_delivery_at += duration
         instance.status = "RUNNING"
+        await self.session.flush()
+        return instance
+
+    async def resume_for_source(
+        self,
+        instance_id: UUID,
+        *,
+        source_type: str,
+        source_id: UUID,
+        idempotency_key: str,
+    ) -> SLAInstance:
+        """只恢复指定来源创建的活动暂停。"""
+        instance = await self._get_instance(instance_id)
+        pause = await self.session.scalar(
+            select(SLAPause).where(
+                SLAPause.instance_id == instance.id,
+                SLAPause.source_type == source_type,
+                SLAPause.source_id == source_id,
+                SLAPause.ended_at.is_(None),
+            )
+        )
+        if pause is None:
+            return instance
+        await self._finish_pause(instance, pause, idempotency_key)
+        other_active_pause = await self.session.scalar(
+            select(SLAPause.id)
+            .where(
+                SLAPause.instance_id == instance.id,
+                SLAPause.ended_at.is_(None),
+            )
+            .limit(1)
+        )
+        if other_active_pause is None:
+            instance.status = "RUNNING"
         await self.session.flush()
         return instance
 
@@ -154,3 +229,28 @@ class SLAService:
         if instance is None:
             raise ValueError("SLA 实例不存在")
         return instance
+
+    async def _finish_pause(
+        self,
+        instance: SLAInstance,
+        pause: SLAPause,
+        idempotency_key: str,
+    ) -> None:
+        now = to_business_timezone(self.clock.now())
+        started_at = to_business_timezone(pause.started_at)
+        duration = now - started_at
+        pause.ended_at = now
+        pause.duration_seconds = int(duration.total_seconds())
+        pause.resume_idempotency_key = idempotency_key
+        instance.paused_seconds += pause.duration_seconds
+        rule = await self.session.get(SLARule, instance.rule_id)
+        if rule is None or instance.promised_delivery_at is None:
+            raise ValueError("SLA 实例数据不完整")
+        if rule.target_work_hours is not None:
+            worked = work_hours_between(started_at, now)
+            instance.promised_delivery_at = add_work_hours(
+                instance.promised_delivery_at,
+                worked.total_seconds() / 3600,
+            )
+        else:
+            instance.promised_delivery_at += duration
