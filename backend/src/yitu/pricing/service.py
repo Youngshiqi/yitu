@@ -1,7 +1,7 @@
 """报价快照应用服务。"""
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yitu.identity.models import Role
@@ -60,7 +60,16 @@ class PricingService:
 
     async def _active_rule(self, origin: str, destination: str) -> PricingRule:
         code = route_code(origin, destination)
-        rule = await self._session.scalar(select(PricingRule).where(PricingRule.route_code == code, PricingRule.effective_to.is_(None)).order_by(PricingRule.effective_from.desc()))
+        now = Clock.now()
+        rule = await self._session.scalar(
+            select(PricingRule)
+            .where(
+                PricingRule.route_code == code,
+                PricingRule.effective_from <= now,
+                or_(PricingRule.effective_to.is_(None), PricingRule.effective_to > now),
+            )
+            .order_by(PricingRule.effective_from.desc())
+        )
         if rule is None:
             raise AppError("ROUTE_NOT_SUPPORTED", "当前线路暂不支持报价", 422)
         return rule

@@ -1,3 +1,4 @@
+from datetime import timedelta
 from uuid import uuid4
 
 import pytest
@@ -5,7 +6,9 @@ from httpx import ASGITransport, AsyncClient
 
 from yitu.demo.seed import DEMO_PASSWORD, seed_demo_users
 from yitu.main import create_app
+from yitu.platform.clock import Clock
 from yitu.platform.database import SessionFactory, dispose_database
+from yitu.pricing.models import PricingRule
 from yitu.pricing.policy import PricingInput, calculate_quote
 
 pytestmark = pytest.mark.asyncio(loop_scope="function")
@@ -51,6 +54,7 @@ async def test_http_quote_snapshot_is_immutable_after_reweigh() -> None:
 
     async with SessionFactory() as session, session.begin():
         await seed_demo_users(session)
+        session.add(PricingRule(version=f"pricing-future-{uuid4()}", route_code="BJ_SH", base_fee_cents=9_999, additional_fee_cents=9_999, effective_from=Clock.now() + timedelta(days=1)))
     settings = get_settings()
     original_profile = settings.app_profile
     settings.app_profile = "demo"
@@ -64,6 +68,7 @@ async def test_http_quote_snapshot_is_immutable_after_reweigh() -> None:
             created = await client.post("/api/v1/pricing/quotes", headers={**headers, "Idempotency-Key": quote_key}, json=payload)
             assert created.status_code == 201, created.text
             original = created.json()
+            assert original["rule_version"] == "pricing-demo-v1"
             replay = await client.post("/api/v1/pricing/quotes", headers={**headers, "Idempotency-Key": quote_key}, json=payload)
             assert replay.status_code == 201
             assert replay.json()["id"] == original["id"]

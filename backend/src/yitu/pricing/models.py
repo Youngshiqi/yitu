@@ -20,8 +20,8 @@ class PricingRule(Base):
     base_fee_cents: Mapped[int] = mapped_column(Integer, nullable=False)
     additional_fee_cents: Mapped[int] = mapped_column(Integer, nullable=False)
     remote_surcharge_cents: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    effective_from: Mapped[datetime] = mapped_column(nullable=False)
-    effective_to: Mapped[datetime | None] = mapped_column(nullable=True)
+    effective_from: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    effective_to: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class QuoteSnapshot(Base):
