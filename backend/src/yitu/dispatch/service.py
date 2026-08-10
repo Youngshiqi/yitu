@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yitu.dispatch.models import CourierTask, CourierTaskStatus, CourierTaskType
@@ -33,13 +33,20 @@ class DispatchService:
             raise AppError("FORBIDDEN_ROLE", "角色权限不足", 403)
         task = await self._get_task(task_id)
         require_station_scope(task.station_id, actor)
-        if CourierTaskStatus(task.status) is not CourierTaskStatus.AVAILABLE:
-            raise AppError("TASK_NOT_AVAILABLE", "任务当前不可接单", 409)
-        shipment = await self._get_shipment(task.shipment_id)
-        task.status = CourierTaskStatus.ACCEPTED
-        task.assignee_id = actor.id
+        accepted = await self._session.scalar(
+            update(CourierTask)
+            .where(
+                CourierTask.id == task_id,
+                CourierTask.status == CourierTaskStatus.AVAILABLE,
+            )
+            .values(status=CourierTaskStatus.ACCEPTED, assignee_id=actor.id)
+            .returning(CourierTask)
+        )
+        if accepted is None:
+            raise AppError("TASK_ALREADY_ASSIGNED", "任务已被其他快递员接单", 409)
+        shipment = await self._get_shipment(accepted.shipment_id)
         await ShipmentTransitionService(self._session).transition(shipment, ShipmentStatus.PICKUP_ASSIGNED, actor, "assign_pickup", request_id)
-        return task
+        return accepted
 
     async def confirm_pickup(self, task_id: UUID, actor: CurrentUser, request_id: str) -> CourierTask:
         """由接单快递员确认完成上门揽收。"""
