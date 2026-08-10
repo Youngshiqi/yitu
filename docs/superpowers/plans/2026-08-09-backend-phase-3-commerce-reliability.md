@@ -22,11 +22,11 @@
 
 **接口：** 产出 `PricingService.quote()`、`reweigh()`、`QuoteSnapshot` 和费用明细路由。
 
-- [ ] 测试体积重量、整数舍入、版本生效时间、历史结果稳定性和不支持的路线。
-- [ ] 运行 `cd backend; uv run pytest tests/pricing -q`；预期因缺少计价模块而失败。
-- [ ] 实现版本化模板和返回整数分项金额的纯策略；持久化输入与规则快照。
-- [ ] 运行迁移和 `uv run pytest tests/pricing -q`；预期全部通过。
-- [ ] 提交：`功能：新增版本化运单计价`。
+- [x] 测试体积重量、整数舍入、版本生效时间、历史结果稳定性和不支持的路线。
+- [x] 运行 `cd backend; uv run pytest tests/pricing -q`；预期因缺少计价模块而失败。
+- [x] 实现版本化模板和返回整数分项金额的纯策略；持久化输入与规则快照。
+- [x] 运行迁移和 `uv run pytest tests/pricing -q`；预期全部通过。
+- [x] 提交：`功能：新增版本化运单计价`。
 
 ### 任务 2：模拟支付、补差价与取消退款
 
