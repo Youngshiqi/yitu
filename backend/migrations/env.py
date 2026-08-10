@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from yitu.identity import models as _identity_models  # noqa: F401
 from yitu.platform.config import get_settings
 from yitu.platform.models import Base
+from yitu.stations import models as _station_models  # noqa: F401
 
 config = context.config
 settings = get_settings()

@@ -3,7 +3,8 @@ from uuid import UUID
 
 import jwt
 from argon2 import PasswordHasher
-from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatchError
+from argon2.exceptions import InvalidHash as InvalidHashError
+from argon2.exceptions import VerificationError, VerifyMismatchError
 
 from yitu.platform.config import get_settings
 
