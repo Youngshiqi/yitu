@@ -19,3 +19,11 @@
 - 普通任务保留少量关键测试；数据库并发、权限、状态机、RAG 和 Agent 才进行专项验证。
 - Git 提交信息使用中文。
 - Celery 固定使用独立的 `yitu` 队列，避免消费同一 Redis 中其他项目的默认任务。
+
+## 阶段三业务规则入口
+
+- 阶段三计划：`docs/superpowers/plans/2026-08-09-backend-phase-3-commerce-reliability.md`。
+- 计价基线：`docs/business/pricing-rules.md`。
+- SLA/ETA 基线：`docs/business/sla-rules.md`。
+- 业务规则导航和后续节点：`docs/business/README.md`。
+- 上述规则目前是“演示基线 / 待运营确认”，实现时必须版本化；AI/RAG 只能解释，不能裁决金额、权限、状态或 SLA。
