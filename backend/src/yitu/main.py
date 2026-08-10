@@ -10,6 +10,7 @@ from starlette.middleware.base import RequestResponseEndpoint
 from yitu.addresses.router import router as addresses_router
 from yitu.dispatch.router import router as dispatch_router
 from yitu.identity.router import router as identity_router
+from yitu.payments.router import router as payments_router
 from yitu.platform.config import get_settings
 from yitu.platform.database import SessionFactory, dispose_database
 from yitu.platform.errors import AppError
@@ -56,6 +57,7 @@ def create_app() -> FastAPI:
     app.include_router(dispatch_router)
     app.include_router(shipments_router)
     app.include_router(pricing_router)
+    app.include_router(payments_router)
 
     @app.middleware("http")
     async def attach_request_id(
