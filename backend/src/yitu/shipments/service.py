@@ -1,10 +1,12 @@
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yitu.addresses.models import Address
 from yitu.identity.service import CurrentUser, require_resource_owner
+from yitu.platform.audit import AuditService
 from yitu.platform.idempotency import (
     IdempotencyResponse,
     IdempotencyService,
@@ -14,6 +16,9 @@ from yitu.platform.outbox import OutboxService
 from yitu.shipments.enums import ShipmentStatus
 from yitu.shipments.models import Shipment
 from yitu.shipments.schemas import CreateShipmentCommand
+from yitu.shipments.state_machine import transition
+from yitu.tracking.models import TrackingEvent
+from yitu.tracking.service import append_tracking_event
 
 
 class ShipmentView(BaseModel):
@@ -85,3 +90,48 @@ class ShipmentApplicationService:
             scope, idempotency_key, request_hash, operation
         )
         return ShipmentView.model_validate(response.body)
+
+
+class ShipmentTransitionService:
+    """在同一事务中写入状态、轨迹和审计事实。"""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def transition(
+        self,
+        shipment: Shipment,
+        target: ShipmentStatus,
+        actor: CurrentUser,
+        action: str,
+        request_id: str,
+    ) -> TrackingEvent:
+        """执行受状态机约束的动作，并将结果追加为客户轨迹。"""
+        event_key = f"shipment:{shipment.id}:{action}:{request_id}"
+        existing = await self._session.scalar(
+            select(TrackingEvent).where(
+                TrackingEvent.shipment_id == shipment.id,
+                TrackingEvent.idempotency_key == event_key,
+            )
+        )
+        if existing is not None:
+            return existing
+        previous = ShipmentStatus(shipment.status)
+        shipment.status = transition(previous, target)
+        event = await append_tracking_event(
+            self._session,
+            shipment.id,
+            event_type=action,
+            message=f"运单状态已更新为 {target.value}",
+            idempotency_key=event_key,
+        )
+        await AuditService(self._session).record(
+            actor=str(actor.id),
+            action=f"shipment.{action}",
+            resource=f"shipment:{shipment.id}",
+            before_summary={"status": previous.value},
+            after_summary={"status": target.value},
+            reason=None,
+            request_id=request_id,
+        )
+        return event

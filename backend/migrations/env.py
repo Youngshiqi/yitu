@@ -12,6 +12,7 @@ from yitu.platform.config import get_settings
 from yitu.platform.models import Base
 from yitu.shipments import models as _shipment_models  # noqa: F401
 from yitu.stations import models as _station_models  # noqa: F401
+from yitu.tracking import models as _tracking_models  # noqa: F401
 
 config = context.config
 settings = get_settings()
