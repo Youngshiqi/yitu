@@ -38,7 +38,7 @@ input:focus, select:focus, textarea:focus {
 }
 
 .page-title { font-size: 1.5rem; font-weight: 700; color: var(--color-primary-800); margin-bottom: var(--space-lg); }
-.page-container { padding: var(--space-xl); max-width: 1200px; margin: 0 auto; width: 100%; }
+.page-container { padding: var(--space-xl); width: 100%; }
 
 .card {
   background: var(--color-bg-card); border-radius: var(--radius-lg);
