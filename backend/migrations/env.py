@@ -16,6 +16,7 @@ from yitu.pricing import models as _pricing_models  # noqa: F401
 from yitu.shipments import credential_models as _credential_models  # noqa: F401
 from yitu.shipments import models as _shipment_models  # noqa: F401
 from yitu.shipments import transport_models as _transport_models  # noqa: F401
+from yitu.sla import models as _sla_models  # noqa: F401
 from yitu.stations import models as _station_models  # noqa: F401
 from yitu.tracking import models as _tracking_models  # noqa: F401
 
