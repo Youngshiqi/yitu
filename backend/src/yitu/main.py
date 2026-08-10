@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 from starlette.middleware.base import RequestResponseEndpoint
 
+from yitu.identity.router import router as identity_router
 from yitu.platform.config import get_settings
 from yitu.platform.database import dispose_database
 from yitu.platform.errors import AppError
@@ -37,6 +38,7 @@ def create_app() -> FastAPI:
     """创建并配置 Yitu API 应用。"""
     settings = get_settings()
     app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
+    app.include_router(identity_router)
 
     @app.middleware("http")
     async def attach_request_id(
