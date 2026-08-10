@@ -160,11 +160,11 @@
 
 **产出：** `dispatch_linehaul()`、`arrive_destination()`、`TransportLeg`；按收件方式创建派送任务或自取凭证请求。
 
-- [ ] 测试始发操作员发车、运营管理员到站、过早到站拒绝和派送/自取分支。
-- [ ] 运行测试确认红灯。
-- [ ] 实现 `AT_ORIGIN_STATION -> IN_LINEHAUL -> AT_DESTINATION_STATION` 显式动作、运输段、轨迹和审计。
-- [ ] 运行迁移与干线测试。
-- [ ] 提交：`功能：新增模拟干线与目标端分支`。
+- [x] 测试始发操作员发车、运营管理员到站、过早到站拒绝和派送/自取分支。
+- [x] 运行测试确认红灯。
+- [x] 实现 `AT_ORIGIN_STATION -> IN_LINEHAUL -> AT_DESTINATION_STATION` 显式动作、运输段、轨迹和审计。
+- [x] 运行迁移与干线测试。
+- [x] 提交：`功能：新增模拟干线与目标端分支`。
 
 ### 小任务 2.13：派送与网点自取凭证
 

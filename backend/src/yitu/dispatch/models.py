@@ -11,6 +11,7 @@ class CourierTaskType(str, enum.Enum):
     """快递员任务的业务类型。"""
 
     PICKUP = "PICKUP"
+    DELIVERY = "DELIVERY"
 
 
 class CourierTaskStatus(str, enum.Enum):

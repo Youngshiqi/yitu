@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from yitu.dispatch.service import DispatchService
 from yitu.identity.service import CurrentUser, get_current_user
 from yitu.platform.database import get_session
+from yitu.shipments.linehaul import LinehaulResult, LinehaulService
 from yitu.shipments.service import ShipmentView
 
 router = APIRouter(prefix="/api/v1/dispatch", tags=["dispatch"])
@@ -37,3 +38,17 @@ async def confirm_origin_arrival(shipment_id: UUID, user: CurrentUser = _current
     shipment = await DispatchService(session).confirm_origin_arrival(shipment_id, user, f"arrival:{shipment_id}")
     await session.commit()
     return ShipmentView.model_validate(shipment)
+
+
+@router.post("/shipments/{shipment_id}/dispatch-linehaul", response_model=LinehaulResult)
+async def dispatch_linehaul(shipment_id: UUID, user: CurrentUser = _current_user, session: AsyncSession = _session) -> LinehaulResult:
+    result = await LinehaulService(session).dispatch_linehaul(shipment_id, user, f"dispatch-linehaul:{shipment_id}")
+    await session.commit()
+    return result
+
+
+@router.post("/shipments/{shipment_id}/arrive-destination", response_model=LinehaulResult)
+async def arrive_destination(shipment_id: UUID, user: CurrentUser = _current_user, session: AsyncSession = _session) -> LinehaulResult:
+    result = await LinehaulService(session).arrive_destination(shipment_id, user, f"arrive-destination:{shipment_id}")
+    await session.commit()
+    return result
