@@ -30,5 +30,5 @@ Compose 会以演示模式启动并自动创建以下固定身份，统一密码
 
 ## 阶段三可靠性能力
 
-- 电子面单投影只输出运单号、Code 128 条码值和带签名的二维码查询令牌，不包含姓名、电话或详细地址。
+- 电子面单接口 `/api/v1/shipments/{shipment_id}/label` 只输出运单号、Code 128 条码值和带签名的二维码查询令牌，不包含姓名、电话或详细地址。
 - 系统管理员可通过 `/api/v1/admin/dead-letters` 查看数据库死信，并通过 `/api/v1/admin/dead-letters/{dead_letter_id}/replay` 将修复后的事件恢复为待投递状态。

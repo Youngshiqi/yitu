@@ -7,6 +7,7 @@ from yitu.dispatch.service import DispatchService
 from yitu.exceptions.service import ExceptionService
 from yitu.identity.models import Role
 from yitu.identity.service import CurrentUser, get_current_user, require_resource_owner
+from yitu.labels.service import LabelProjection, LabelService
 from yitu.platform.database import get_session
 from yitu.platform.errors import AppError
 from yitu.shipments.enums import PickupMethod, ShipmentStatus
@@ -79,6 +80,22 @@ async def get_tracking(shipment_id: UUID, user: CurrentUser = _current_user, ses
         raise AppError("SHIPMENT_NOT_FOUND", "运单不存在", 404)
     require_resource_owner(shipment.owner_id, user)
     return [TrackingEventView.model_validate(event) for event in await list_tracking_events(session, shipment_id)]
+
+
+@router.get("/{shipment_id}/label", response_model=LabelProjection)
+async def get_label(
+    shipment_id: UUID,
+    user: CurrentUser = _current_user,
+    session: AsyncSession = _session,
+) -> LabelProjection:
+    shipment = await session.get(Shipment, shipment_id)
+    if shipment is None:
+        raise AppError("SHIPMENT_NOT_FOUND", "运单不存在", 404)
+    if user.role is Role.CUSTOMER:
+        require_resource_owner(shipment.owner_id, user)
+    elif user.role is not Role.OPERATIONS_ADMIN:
+        raise AppError("FORBIDDEN_ROLE", "角色权限不足", 403)
+    return await LabelService(session).project(shipment_id)
 
 
 @router.post("/{shipment_id}/resume", response_model=ShipmentResumeView)

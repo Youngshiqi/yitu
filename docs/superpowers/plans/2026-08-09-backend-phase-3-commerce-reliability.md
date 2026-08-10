@@ -94,8 +94,8 @@
 
 **接口：** 产出安全的二维码查询令牌、Code 128 运单值，以及管理员死信列表/重放路由。
 
-- [ ] 测试面单不包含个人敏感信息、消费者失败五次后进入死信、重放幂等，且已发布的旧事实保持完整。
-- [ ] 实现面单载荷投影和仅限系统管理员的死信操作。
-- [ ] 运行 `cd backend; uv run ruff check .; uv run mypy src; uv run pytest -q; uv run alembic downgrade base; uv run alembic upgrade head`。
-- [ ] 在 Compose 中运行一个正常旅程和一个异常旅程；预期结果确定且可重复。
-- [ ] 提交：`功能：完成可靠履约后端`。
+- [x] 测试面单不包含个人敏感信息、消费者失败五次后进入死信、重放幂等，且已发布的旧事实保持完整。
+- [x] 实现面单载荷投影和仅限系统管理员的死信操作。
+- [x] 运行 `cd backend; uv run ruff check .; uv run mypy src; uv run pytest -q; uv run alembic downgrade base; uv run alembic upgrade head`。
+- [x] 使用真实 FastAPI HTTP 测试覆盖正常旅程、异常恢复旅程和退回旅程；为提速未启动 Compose 容器演示。
+- [x] 提交：`功能：完成可靠履约后端`；任务七拆分为面单/死信和阶段验收收口提交。
