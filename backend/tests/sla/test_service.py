@@ -7,6 +7,8 @@ import pytest
 from sqlalchemy import select
 
 from yitu.demo.seed import seed_demo_users
+from yitu.exceptions.enums import ExceptionSourceType, ExceptionStatus, ExceptionType
+from yitu.exceptions.models import ExceptionCase
 from yitu.platform.database import SessionFactory, dispose_database
 from yitu.shipments.enums import DeliveryMethod, PickupMethod, ShipmentStatus
 from yitu.shipments.models import Shipment
@@ -62,6 +64,51 @@ async def test_eta_does_not_overwrite_promise_and_scan_is_idempotent() -> None:
         clock.value = start_at + timedelta(hours=2)
         assert len(await service.scan_breaches("window-1")) == 1
         assert len(await service.scan_breaches("window-1")) == 0
+
+
+async def test_scan_breaches_opens_station_delay_case_once() -> None:
+    start_at = datetime(2026, 8, 14, 10, tzinfo=TZ)
+    clock = FixedClock(start_at)
+    async with SessionFactory() as session, session.begin():
+        users = await seed_demo_users(session)
+        customer = next(user for user in users if user.demo_key == "customer")
+        shipment = Shipment(
+            shipment_no=f"SLA-{uuid4().hex[:20]}",
+            owner_id=customer.id,
+            pickup_method=PickupMethod.DOOR_PICKUP,
+            delivery_method=DeliveryMethod.HOME_DELIVERY,
+            status=ShipmentStatus.PENDING_PICKUP,
+        )
+        rule = SLARule(
+            version=f"sla-auto-{uuid4()}",
+            route_code="TEST",
+            service_type="STANDARD",
+            stage="PICKUP",
+            target_natural_hours=1,
+            effective_from=start_at - timedelta(days=1),
+        )
+        session.add_all([shipment, rule])
+        await session.flush()
+        service = SLAService(session, clock=clock)
+        instance = await service.start(shipment.id, "TEST", "PICKUP")
+        clock.value = start_at + timedelta(hours=2)
+        assert len(await service.scan_breaches("window-1")) == 1
+        assert len(await service.scan_breaches("window-2")) == 0
+
+    async with SessionFactory() as session:
+        cases = (
+            await session.scalars(
+                select(ExceptionCase).where(
+                    ExceptionCase.source_type == ExceptionSourceType.SLA_SCAN,
+                    ExceptionCase.source_id == instance.id,
+                )
+            )
+        ).all()
+
+    assert len(cases) == 1
+    assert cases[0].case_type == ExceptionType.STATION_DELAY
+    assert cases[0].status == ExceptionStatus.OPEN
+    assert cases[0].blocks_fulfillment is False
 
 
 async def test_pause_and_resume_for_source_only_affect_matching_pause() -> None:

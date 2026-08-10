@@ -6,7 +6,16 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from yitu.exceptions.enums import (
+    ExceptionSeverity,
+    ExceptionSourceType,
+    ExceptionStatus,
+    ExceptionType,
+)
+from yitu.exceptions.models import ExceptionCase
+from yitu.platform.audit import AuditService
 from yitu.platform.clock import Clock, to_business_timezone
+from yitu.platform.outbox import OutboxService
 from yitu.shipments.models import Shipment
 from yitu.sla.calendar import add_work_hours, work_hours_between
 from yitu.sla.models import SLAInstance, SLAPause, SLARule
@@ -211,6 +220,7 @@ class SLAService:
         instances = (await self.session.scalars(
             select(SLAInstance).where(
                 SLAInstance.status == "RUNNING",
+                SLAInstance.breached.is_(False),
                 SLAInstance.promised_delivery_at < now,
             )
         )).all()
@@ -220,6 +230,7 @@ class SLAService:
                 continue
             instance.breached = True
             instance.last_scan_key = scan_key
+            await self._open_breach_case(instance, scan_key)
             changed.append(instance)
         await self.session.flush()
         return changed
@@ -254,3 +265,71 @@ class SLAService:
             )
         else:
             instance.promised_delivery_at += duration
+
+    async def _open_breach_case(self, instance: SLAInstance, scan_key: str) -> None:
+        existing = await self.session.scalar(
+            select(ExceptionCase.id).where(
+                ExceptionCase.source_type == ExceptionSourceType.SLA_SCAN,
+                ExceptionCase.source_id == instance.id,
+            )
+        )
+        if existing is not None:
+            return
+        shipment = await self.session.get(Shipment, instance.shipment_id)
+        if shipment is None:
+            raise ValueError("运单不存在")
+        case = ExceptionCase(
+            shipment_id=instance.shipment_id,
+            case_type=ExceptionType.STATION_DELAY,
+            severity=ExceptionSeverity.HIGH,
+            status=ExceptionStatus.OPEN,
+            source_type=ExceptionSourceType.SLA_SCAN,
+            source_id=instance.id,
+            description=f"SLA 阶段 {instance.stage} 已超时",
+            evidence_summary={
+                "sla_instance_id": str(instance.id),
+                "stage": instance.stage,
+                "scan_key": scan_key,
+            },
+            blocks_fulfillment=False,
+            responsible_station_id=_responsible_station_id(shipment, instance.stage),
+            opened_at=self.clock.now(),
+            idempotency_key=f"exception:sla:{instance.id}",
+            request_id=scan_key,
+        )
+        self.session.add(case)
+        await self.session.flush()
+        await AuditService(self.session).record(
+            actor="system:sla-scanner",
+            action="exception.open_from_sla",
+            resource=f"exception:{case.id}",
+            before_summary=None,
+            after_summary={
+                "status": ExceptionStatus.OPEN.value,
+                "case_type": ExceptionType.STATION_DELAY.value,
+                "sla_instance_id": str(instance.id),
+            },
+            reason="SLA 超时自动开单",
+            request_id=scan_key,
+        )
+        await OutboxService(self.session).append(
+            event_type="notification.requested",
+            business_id=f"exception:{case.id}:sla-breach",
+            payload={
+                "recipient_id": str(shipment.owner_id),
+                "template_code": "SLA_BREACHED",
+                "template_data": {
+                    "shipment_no": shipment.shipment_no,
+                    "stage": instance.stage,
+                },
+            },
+            idempotency_key=f"notification:exception:{case.id}:sla-breach",
+        )
+
+
+def _responsible_station_id(shipment: Shipment, stage: str) -> UUID | None:
+    if stage in {"PICKUP", "ORIGIN", "ORIGIN_PROCESSING"}:
+        return shipment.origin_station_id
+    if stage in {"DESTINATION", "DELIVERY", "PICKUP_AT_STATION"}:
+        return shipment.destination_station_id
+    return None
