@@ -54,6 +54,15 @@ class SLAPause(Base):
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     instance_id: Mapped[UUID] = mapped_column(ForeignKey("sla_instances.id", ondelete="CASCADE"), nullable=False)
     reason: Mapped[str] = mapped_column(String(256), nullable=False)
+    reason_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    source_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    source_id: Mapped[UUID | None] = mapped_column(nullable=True)
+    actor_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
+    pause_idempotency_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    resume_idempotency_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     duration_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

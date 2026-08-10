@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from yitu.addresses import models as _address_models  # noqa: F401
 from yitu.dispatch import models as _dispatch_models  # noqa: F401
+from yitu.exceptions import models as _exception_models  # noqa: F401
 from yitu.identity import models as _identity_models  # noqa: F401
 from yitu.notifications import models as _notification_models  # noqa: F401
 from yitu.payments import models as _payment_models  # noqa: F401
@@ -15,6 +16,7 @@ from yitu.platform.config import get_settings
 from yitu.platform.models import Base
 from yitu.pricing import models as _pricing_models  # noqa: F401
 from yitu.shipments import credential_models as _credential_models  # noqa: F401
+from yitu.shipments import hold_models as _hold_models  # noqa: F401
 from yitu.shipments import models as _shipment_models  # noqa: F401
 from yitu.shipments import transport_models as _transport_models  # noqa: F401
 from yitu.sla import models as _sla_models  # noqa: F401

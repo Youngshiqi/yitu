@@ -1,7 +1,8 @@
 import enum
+from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import ForeignKey, String
+from sqlalchemy import DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from yitu.platform.models import Base
@@ -20,6 +21,7 @@ class CourierTaskStatus(str, enum.Enum):
     AVAILABLE = "AVAILABLE"
     ACCEPTED = "ACCEPTED"
     COMPLETED = "COMPLETED"
+    CANCELLED = "CANCELLED"
 
 
 class CourierTask(Base):
@@ -33,3 +35,9 @@ class CourierTask(Base):
     task_type: Mapped[CourierTaskType] = mapped_column(String(32), nullable=False)
     status: Mapped[CourierTaskStatus] = mapped_column(String(32), nullable=False)
     assignee_id: Mapped[UUID | None] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), nullable=True)
+    closed_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    replaced_by_task_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("courier_tasks.id", ondelete="RESTRICT"),
+        nullable=True,
+    )
