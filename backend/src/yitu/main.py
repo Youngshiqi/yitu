@@ -7,12 +7,14 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 from starlette.middleware.base import RequestResponseEndpoint
 
+from yitu.addresses.router import router as addresses_router
 from yitu.identity.router import router as identity_router
 from yitu.platform.config import get_settings
 from yitu.platform.database import dispose_database
 from yitu.platform.errors import AppError
 from yitu.platform.readiness import check_readiness
 from yitu.platform.schemas import ErrorResponse
+from yitu.stations.router import router as stations_router
 
 
 class HealthResponse(BaseModel):
@@ -39,6 +41,8 @@ def create_app() -> FastAPI:
     settings = get_settings()
     app = FastAPI(title=settings.app_name, version="0.1.0", lifespan=lifespan)
     app.include_router(identity_router)
+    app.include_router(stations_router)
+    app.include_router(addresses_router)
 
     @app.middleware("http")
     async def attach_request_id(
