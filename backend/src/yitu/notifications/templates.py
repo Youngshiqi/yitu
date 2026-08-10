@@ -24,6 +24,10 @@ _TEMPLATES: dict[str, RenderedTemplate] = {
         title="运输时效提醒",
         content="运单 {shipment_no} 的 {stage} 阶段可能延误，请关注后续轨迹。",
     ),
+    "EXCEPTION_OPENED": RenderedTemplate(
+        title="运单异常已受理",
+        content="运单 {shipment_no} 出现异常，正在处理中。",
+    ),
 }
 
 

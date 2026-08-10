@@ -9,6 +9,7 @@ from starlette.middleware.base import RequestResponseEndpoint
 
 from yitu.addresses.router import router as addresses_router
 from yitu.dispatch.router import router as dispatch_router
+from yitu.exceptions.router import router as exceptions_router
 from yitu.identity.router import router as identity_router
 from yitu.notifications.router import router as notifications_router
 from yitu.payments.router import router as payments_router
@@ -57,6 +58,7 @@ def create_app() -> FastAPI:
     app.include_router(stations_router)
     app.include_router(addresses_router)
     app.include_router(dispatch_router)
+    app.include_router(exceptions_router)
     app.include_router(shipments_router)
     app.include_router(pricing_router)
     app.include_router(payments_router)
