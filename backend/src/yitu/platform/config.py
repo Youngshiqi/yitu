@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     knowledge_s3_endpoint: str | None = None
     knowledge_s3_access_key: str | None = None
     knowledge_s3_secret_key: str | None = None
+    knowledge_s3_region: str = "ap-guangzhou"
 
     model_config = SettingsConfigDict(env_prefix="YITU_", env_file=".env", extra="ignore")
 

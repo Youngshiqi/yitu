@@ -46,6 +46,11 @@ services:
       YITU_APP_PROFILE: demo
       YITU_KNOWLEDGE_STORAGE_BACKEND: local
       YITU_KNOWLEDGE_STORAGE_ROOT: /app/var/knowledge
+      YITU_KNOWLEDGE_S3_ENDPOINT: ${YITU_KNOWLEDGE_S3_ENDPOINT}
+      YITU_KNOWLEDGE_S3_BUCKET: ${YITU_KNOWLEDGE_S3_BUCKET}
+      YITU_KNOWLEDGE_S3_REGION: ${YITU_KNOWLEDGE_S3_REGION}
+      YITU_KNOWLEDGE_S3_ACCESS_KEY: ${YITU_KNOWLEDGE_S3_ACCESS_KEY}
+      YITU_KNOWLEDGE_S3_SECRET_KEY: ${YITU_KNOWLEDGE_S3_SECRET_KEY}
     command: >-
       sh -c ".venv/bin/alembic upgrade head &&
       .venv/bin/uvicorn yitu.main:create_app --factory
@@ -75,6 +80,11 @@ services:
       YITU_REDIS_URL: ${YITU_REDIS_URL}
       YITU_KNOWLEDGE_STORAGE_BACKEND: local
       YITU_KNOWLEDGE_STORAGE_ROOT: /app/var/knowledge
+      YITU_KNOWLEDGE_S3_ENDPOINT: ${YITU_KNOWLEDGE_S3_ENDPOINT}
+      YITU_KNOWLEDGE_S3_BUCKET: ${YITU_KNOWLEDGE_S3_BUCKET}
+      YITU_KNOWLEDGE_S3_REGION: ${YITU_KNOWLEDGE_S3_REGION}
+      YITU_KNOWLEDGE_S3_ACCESS_KEY: ${YITU_KNOWLEDGE_S3_ACCESS_KEY}
+      YITU_KNOWLEDGE_S3_SECRET_KEY: ${YITU_KNOWLEDGE_S3_SECRET_KEY}
     command: >-
       .venv/bin/celery -A yitu.worker:celery_app worker
       --loglevel=INFO --hostname=worker@%h --beat
