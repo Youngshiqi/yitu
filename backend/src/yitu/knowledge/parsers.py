@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from typing import Protocol
 
+from yitu.knowledge.artifacts import MinerUArtifactError
+
 
 @dataclass(frozen=True, slots=True)
 class ParsedDocument:
@@ -15,7 +17,7 @@ class DocumentParser(Protocol):
 
 
 class PyMuPDFParser:
-    """Lightweight fallback parser; production can replace it with PyMuPDF."""
+    """开发环境的轻量 PDF 降级解析器，不参与生产 MinerU 主链路。"""
 
     def parse(self, data: bytes) -> ParsedDocument:
         lines = [line.decode("utf-8", errors="ignore").strip() for line in data.splitlines()]
@@ -25,5 +27,18 @@ class PyMuPDFParser:
 
 
 class MinerUParser:
+    """把 MinerU 生成的 UTF-8 Markdown 转为统一解析结果。"""
+
     def parse(self, data: bytes) -> ParsedDocument:
-        raise RuntimeError("MinerU parser is not installed")
+        try:
+            text = data.decode("utf-8").lstrip("\ufeff").strip()
+        except UnicodeDecodeError:
+            raise MinerUArtifactError("MinerU full.md is not valid UTF-8") from None
+        if not text:
+            raise MinerUArtifactError("MinerU full.md is empty")
+        return ParsedDocument(
+            text=text,
+            page_count=1,
+            parser_name="mineru",
+            parser_version="v4-vlm",
+        )

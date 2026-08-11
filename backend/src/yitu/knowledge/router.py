@@ -83,8 +83,8 @@ async def deactivate_document(document_id: UUID, user: CurrentUser = _admins, se
 async def reparse_document(document_id: UUID, user: CurrentUser = _admins, session: AsyncSession = _session) -> KnowledgeDocumentView:
     document = await change_document_status(session, document_id, user, DocumentStatus.QUEUED)
     await session.commit()
-    from yitu.knowledge.tasks import parse_document
-    parse_document.delay(str(document.id))
+    from yitu.knowledge.tasks import submit_mineru_document
+    submit_mineru_document.delay(str(document.id))
     await session.refresh(document)
     return KnowledgeDocumentView.model_validate(document)
 

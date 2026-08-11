@@ -17,3 +17,10 @@ def transition(current: DocumentStatus, target: DocumentStatus) -> DocumentStatu
     if target not in _TRANSITIONS.get(DocumentStatus(current), frozenset()):
         raise AppError("KNOWLEDGE_INVALID_STATUS_TRANSITION", "invalid document status transition", 409)
     return target
+
+
+def resume_parsing(current: DocumentStatus) -> DocumentStatus:
+    """允许重复投递恢复正在解析的文档，同时拒绝跨越业务状态。"""
+    if current == DocumentStatus.PARSING:
+        return DocumentStatus.PARSING
+    return transition(current, DocumentStatus.PARSING)
