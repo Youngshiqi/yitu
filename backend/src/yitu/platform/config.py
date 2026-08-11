@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     embedding_provider: str = "local"
     embedding_base_url: str | None = None
     embedding_api_key: str | None = None
-    embedding_model: str = "bge-m3"
+    embedding_model: str = "qwen3.7-text-embedding"
     embedding_dimension: int | None = None
     mineru_base_url: str = "https://mineru.net"
     mineru_token: str | None = None
