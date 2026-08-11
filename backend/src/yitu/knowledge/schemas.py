@@ -17,6 +17,12 @@ class KnowledgeDocumentView(BaseModel):
     status: DocumentStatus
     page_count: int | None
     error_message: str | None
+    mineru_task_id: str | None
+    source_artifact_key: str | None
+    markdown_artifact_key: str | None
+    result_archive_key: str | None
+    parse_started_at: datetime | None
+    parse_finished_at: datetime | None
     created_at: datetime
     updated_at: datetime
     reviewed_by: UUID | None

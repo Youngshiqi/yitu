@@ -38,6 +38,18 @@ class KnowledgeDocument(Base):
     parser_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
     parser_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
     parse_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    mineru_task_id: Mapped[str | None] = mapped_column(
+        String(128), nullable=True, unique=True, index=True
+    )
+    source_artifact_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    markdown_artifact_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    result_archive_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    parse_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    parse_finished_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     reviewed_by: Mapped[UUID | None] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), nullable=True)
