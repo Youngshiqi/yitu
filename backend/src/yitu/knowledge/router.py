@@ -17,9 +17,15 @@ from yitu.platform.database import get_session
 
 router = APIRouter(prefix="/api/v1/knowledge", tags=["knowledge"])
 _file = File(...)
-_admins = Depends(require_roles(Role.OPERATIONS_ADMIN, Role.SYSTEM_ADMIN))
 _session = Depends(get_session)
 _authenticated = Depends(get_current_user)
+
+
+def admin_user(current_user: CurrentUser = _authenticated) -> CurrentUser:
+    return require_roles(Role.OPERATIONS_ADMIN, Role.SYSTEM_ADMIN)(current_user)
+
+
+_admins = Depends(admin_user)
 
 
 @router.post("/documents", response_model=KnowledgeDocumentView, status_code=201)
