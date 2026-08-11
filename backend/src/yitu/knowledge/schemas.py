@@ -19,3 +19,15 @@ class KnowledgeDocumentView(BaseModel):
     error_message: str | None
     created_at: datetime
     updated_at: datetime
+    reviewed_by: UUID | None
+    reviewed_at: datetime | None
+    published_at: datetime | None
+    effective_from: datetime | None
+    effective_to: datetime | None
+    category: str | None
+
+
+class KnowledgeReviewRequest(BaseModel):
+    category: str | None = None
+    effective_from: datetime | None = None
+    effective_to: datetime | None = None

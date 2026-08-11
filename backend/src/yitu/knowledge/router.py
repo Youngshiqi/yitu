@@ -6,7 +6,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from yitu.identity.models import Role
 from yitu.identity.service import CurrentUser, require_roles
 from yitu.knowledge.blob_store import get_blob_store
-from yitu.knowledge.schemas import KnowledgeDocumentView
+from yitu.knowledge.lifecycle import change_document_status
+from yitu.knowledge.models import DocumentStatus
+from yitu.knowledge.schemas import KnowledgeDocumentView, KnowledgeReviewRequest
 from yitu.knowledge.service import get_document, upload_document
 from yitu.platform.config import get_settings
 from yitu.platform.database import get_session
@@ -39,3 +41,40 @@ async def knowledge_document_status(
     session: AsyncSession = _session,
 ) -> KnowledgeDocumentView:
     return KnowledgeDocumentView.model_validate(await get_document(session, document_id))
+
+
+async def _lifecycle(document_id: UUID, user: CurrentUser, session: AsyncSession, target: DocumentStatus, review: KnowledgeReviewRequest | None = None) -> KnowledgeDocumentView:
+    document = await change_document_status(session, document_id, user, target, review)
+    await session.commit()
+    await session.refresh(document)
+    return KnowledgeDocumentView.model_validate(document)
+
+
+@router.post("/documents/{document_id}/review", response_model=KnowledgeDocumentView)
+async def review_document(document_id: UUID, payload: KnowledgeReviewRequest, user: CurrentUser = _admins, session: AsyncSession = _session) -> KnowledgeDocumentView:
+    return await _lifecycle(document_id, user, session, DocumentStatus.REVIEW_REQUIRED, payload)
+
+
+@router.post("/documents/{document_id}/publish", response_model=KnowledgeDocumentView)
+async def publish_document(document_id: UUID, user: CurrentUser = _admins, session: AsyncSession = _session) -> KnowledgeDocumentView:
+    return await _lifecycle(document_id, user, session, DocumentStatus.PUBLISHED)
+
+
+@router.post("/documents/{document_id}/archive", response_model=KnowledgeDocumentView)
+async def archive_document(document_id: UUID, user: CurrentUser = _admins, session: AsyncSession = _session) -> KnowledgeDocumentView:
+    return await _lifecycle(document_id, user, session, DocumentStatus.ARCHIVED)
+
+
+@router.post("/documents/{document_id}/deactivate", response_model=KnowledgeDocumentView)
+async def deactivate_document(document_id: UUID, user: CurrentUser = _admins, session: AsyncSession = _session) -> KnowledgeDocumentView:
+    return await _lifecycle(document_id, user, session, DocumentStatus.DEACTIVATED)
+
+
+@router.post("/documents/{document_id}/reparse", response_model=KnowledgeDocumentView)
+async def reparse_document(document_id: UUID, user: CurrentUser = _admins, session: AsyncSession = _session) -> KnowledgeDocumentView:
+    document = await change_document_status(session, document_id, user, DocumentStatus.QUEUED)
+    await session.commit()
+    from yitu.knowledge.tasks import parse_document
+    parse_document.delay(str(document.id))
+    await session.refresh(document)
+    return KnowledgeDocumentView.model_validate(document)

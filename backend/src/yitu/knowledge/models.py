@@ -15,6 +15,9 @@ class DocumentStatus(str, enum.Enum):
     PARSING = "PARSING"
     REVIEW_REQUIRED = "REVIEW_REQUIRED"
     PARSE_FAILED = "PARSE_FAILED"
+    PUBLISHED = "PUBLISHED"
+    ARCHIVED = "ARCHIVED"
+    DEACTIVATED = "DEACTIVATED"
 
 
 class KnowledgeDocument(Base):
@@ -37,6 +40,12 @@ class KnowledgeDocument(Base):
     parse_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    reviewed_by: Mapped[UUID | None] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    effective_from: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    effective_to: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    category: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 class KnowledgeChunk(Base):

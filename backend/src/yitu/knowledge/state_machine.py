@@ -5,8 +5,11 @@ _TRANSITIONS: dict[DocumentStatus, frozenset[DocumentStatus]] = {
     DocumentStatus.UPLOADED: frozenset({DocumentStatus.QUEUED, DocumentStatus.PARSING}),
     DocumentStatus.QUEUED: frozenset({DocumentStatus.PARSING, DocumentStatus.PARSE_FAILED}),
     DocumentStatus.PARSING: frozenset({DocumentStatus.REVIEW_REQUIRED, DocumentStatus.PARSE_FAILED}),
-    DocumentStatus.REVIEW_REQUIRED: frozenset({DocumentStatus.QUEUED}),
+    DocumentStatus.REVIEW_REQUIRED: frozenset({DocumentStatus.QUEUED, DocumentStatus.PUBLISHED}),
     DocumentStatus.PARSE_FAILED: frozenset({DocumentStatus.QUEUED}),
+    DocumentStatus.PUBLISHED: frozenset({DocumentStatus.ARCHIVED, DocumentStatus.DEACTIVATED, DocumentStatus.QUEUED}),
+    DocumentStatus.DEACTIVATED: frozenset({DocumentStatus.QUEUED}),
+    DocumentStatus.ARCHIVED: frozenset(),
 }
 
 
