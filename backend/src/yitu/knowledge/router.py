@@ -1,13 +1,15 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, UploadFile
+from fastapi import APIRouter, Depends, File, Query, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yitu.identity.models import Role
-from yitu.identity.service import CurrentUser, require_roles
+from yitu.identity.service import CurrentUser, get_current_user, require_roles
 from yitu.knowledge.blob_store import get_blob_store
 from yitu.knowledge.lifecycle import change_document_status
 from yitu.knowledge.models import DocumentStatus
+from yitu.knowledge.retrieval import KnowledgeRetriever
+from yitu.knowledge.retrieval_schemas import EvidenceView, KnowledgeSearchResponse
 from yitu.knowledge.schemas import KnowledgeDocumentView, KnowledgeReviewRequest
 from yitu.knowledge.service import get_document, upload_document
 from yitu.platform.config import get_settings
@@ -17,6 +19,7 @@ router = APIRouter(prefix="/api/v1/knowledge", tags=["knowledge"])
 _file = File(...)
 _admins = Depends(require_roles(Role.OPERATIONS_ADMIN, Role.SYSTEM_ADMIN))
 _session = Depends(get_session)
+_authenticated = Depends(get_current_user)
 
 
 @router.post("/documents", response_model=KnowledgeDocumentView, status_code=201)
@@ -78,3 +81,15 @@ async def reparse_document(document_id: UUID, user: CurrentUser = _admins, sessi
     parse_document.delay(str(document.id))
     await session.refresh(document)
     return KnowledgeDocumentView.model_validate(document)
+
+
+@router.get("/search", response_model=KnowledgeSearchResponse)
+async def search_knowledge(
+    query: str = Query(min_length=1, max_length=500),
+    category: str | None = Query(default=None, max_length=64),
+    limit: int = Query(default=5, ge=1, le=20),
+    _user: CurrentUser = _authenticated,
+    session: AsyncSession = _session,
+) -> KnowledgeSearchResponse:
+    items = await KnowledgeRetriever(session).search(query, category=category, limit=limit)
+    return KnowledgeSearchResponse(items=[EvidenceView.model_validate(item) for item in items])
