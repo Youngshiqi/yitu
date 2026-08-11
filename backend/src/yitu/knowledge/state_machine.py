@@ -14,6 +14,6 @@ _TRANSITIONS: dict[DocumentStatus, frozenset[DocumentStatus]] = {
 
 
 def transition(current: DocumentStatus, target: DocumentStatus) -> DocumentStatus:
-    if target not in _TRANSITIONS.get(current, frozenset()):
+    if target not in _TRANSITIONS.get(DocumentStatus(current), frozenset()):
         raise AppError("KNOWLEDGE_INVALID_STATUS_TRANSITION", "invalid document status transition", 409)
     return target

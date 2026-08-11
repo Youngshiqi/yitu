@@ -19,16 +19,16 @@ async def change_document_status(session: AsyncSession, document_id: UUID, user:
     if document is None:
         raise AppError("KNOWLEDGE_DOCUMENT_NOT_FOUND", "document not found", 404)
     now = datetime.now(UTC)
-    if target is DocumentStatus.REVIEW_REQUIRED and document.status is DocumentStatus.REVIEW_REQUIRED:
+    if target == DocumentStatus.REVIEW_REQUIRED and document.status == DocumentStatus.REVIEW_REQUIRED:
         document.status = target
     else:
         document.status = transition(document.status, target)
     document.updated_at = now
-    if target is DocumentStatus.PUBLISHED:
+    if target == DocumentStatus.PUBLISHED:
         if document.reviewed_by is None:
             raise AppError("KNOWLEDGE_REVIEW_REQUIRED", "document must be reviewed before publishing", 409)
         document.published_at = now
-    elif target is DocumentStatus.QUEUED:
+    elif target == DocumentStatus.QUEUED:
         await session.execute(delete(KnowledgeChunk).where(KnowledgeChunk.document_id == document.id))
         document.parsed_text = None
         document.parser_name = None
