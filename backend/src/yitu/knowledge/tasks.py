@@ -3,6 +3,7 @@ from uuid import UUID
 
 from yitu.identity import models as _identity_models  # noqa: F401
 from yitu.knowledge.blob_store import get_blob_store
+from yitu.knowledge.indexing import build_index_version
 from yitu.knowledge.models import DocumentStatus
 from yitu.knowledge.parsers import PyMuPDFParser
 from yitu.knowledge.service import get_document
@@ -32,3 +33,4 @@ async def _parse_document(document_id: UUID) -> None:
         document.parser_version = parsed.parser_version
         document.status = transition(document.status, DocumentStatus.REVIEW_REQUIRED)
         document.updated_at = datetime.now(UTC)
+        await build_index_version(session, document.id)
