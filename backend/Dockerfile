@@ -18,6 +18,7 @@ COPY src ./src
 
 RUN addgroup --system yitu && \
     adduser --system --ingroup yitu yitu && \
+    mkdir -p /app/var/knowledge && \
     chown -R yitu:yitu /app
 
 USER yitu
