@@ -9,3 +9,5 @@ backend/.uv-cache/
 backend/.venv/
 backend/.coverage
 backend/var/knowledge/documents/
+backend/var/knowledge/inbox/*
+!backend/var/knowledge/inbox/.gitkeep
