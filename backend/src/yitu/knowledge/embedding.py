@@ -18,9 +18,13 @@ from yitu.platform.config import get_settings
 logger = logging.getLogger(__name__)
 
 QWEN_BATCH_SIZE = 32
+QWEN_EMBEDDING_DIMENSION = 1024
 
 
 class EmbeddingProvider(Protocol):
+    @property
+    def model(self) -> str: ...
+
     @property
     def dimension(self) -> int | None: ...
 
@@ -38,12 +42,18 @@ class EmbeddingPermanentError(RuntimeError):
 class DeterministicEmbedding:
     """仅供开发和自动化测试使用的确定性向量实现。"""
 
-    dimension = 32
+    model = "deterministic-test"
+    dimension = QWEN_EMBEDDING_DIMENSION
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         vectors: list[list[float]] = []
         for text in texts:
-            digest = sha256(text.encode("utf-8")).digest()
+            data = text.encode("utf-8")
+            # 测试向量也保持 1024 维，确保 CI 能覆盖真实 pgvector 列约束。
+            digest = b"".join(
+                sha256(counter.to_bytes(4, "big") + data).digest()
+                for counter in range(self.dimension // 32)
+            )
             vector = [
                 ((byte / 255.0) * 2.0) - 1.0
                 for byte in digest[: self.dimension]

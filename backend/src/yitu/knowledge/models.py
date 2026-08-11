@@ -2,10 +2,22 @@ import enum
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
-from sqlalchemy.dialects.postgresql import JSONB
+from pgvector.sqlalchemy import Vector
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
+from yitu.knowledge.embedding import QWEN_EMBEDDING_DIMENSION
 from yitu.platform.models import Base
 
 
@@ -62,14 +74,48 @@ class KnowledgeDocument(Base):
 
 class KnowledgeChunk(Base):
     __tablename__ = "knowledge_chunks"
-    __table_args__ = (UniqueConstraint("document_id", "index_version", "chunk_index", name="uq_knowledge_chunks_position"),)
+    __table_args__ = (
+        UniqueConstraint(
+            "document_id",
+            "index_version",
+            "chunk_index",
+            name="uq_knowledge_chunks_position",
+        ),
+        CheckConstraint(
+            f"embedding_dimension = {QWEN_EMBEDDING_DIMENSION}",
+            name="ck_knowledge_chunks_embedding_dimension",
+        ),
+        CheckConstraint(
+            "length(embedding_model) > 0",
+            name="ck_knowledge_chunks_embedding_model",
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     document_id: Mapped[UUID] = mapped_column(ForeignKey("knowledge_documents.id", ondelete="CASCADE"), nullable=False)
     index_version: Mapped[int] = mapped_column(Integer, nullable=False)
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    embedding: Mapped[list[float]] = mapped_column(JSONB, nullable=False)
+    embedding: Mapped[list[float]] = mapped_column(
+        Vector(QWEN_EMBEDDING_DIMENSION),
+        nullable=False,
+    )
+    embedding_model: Mapped[str] = mapped_column(String(128), nullable=False)
+    embedding_dimension: Mapped[int] = mapped_column(Integer, nullable=False)
     page_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
     page_end: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+Index(
+    "ix_knowledge_chunks_embedding_hnsw",
+    KnowledgeChunk.embedding,
+    postgresql_using="hnsw",
+    postgresql_ops={"embedding": "vector_cosine_ops"},
+)
+Index(
+    "ix_knowledge_chunks_content_fts",
+    # REGCONFIG 必须作为 SQL 字面量编译，否则建表元数据会生成不可执行的绑定参数。
+    func.to_tsvector(text("'simple'"), KnowledgeChunk.content),
+    postgresql_using="gin",
+)
