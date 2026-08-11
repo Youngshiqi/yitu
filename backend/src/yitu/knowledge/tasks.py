@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
+from yitu.identity import models as _identity_models  # noqa: F401
 from yitu.knowledge.blob_store import get_blob_store
 from yitu.knowledge.models import DocumentStatus
 from yitu.knowledge.parsers import PyMuPDFParser
