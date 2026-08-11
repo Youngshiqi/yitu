@@ -9,6 +9,7 @@ dependencies = [
     "celery[redis]>=5.4,<6",
     "fastapi>=0.115,<1",
     "pydantic-settings>=2.7,<3",
+    "python-multipart>=0.0.20,<1",
     "PyJWT>=2.10,<3",
     "sqlalchemy[asyncio]>=2.0,<3",
     "tzdata>=2025.2",

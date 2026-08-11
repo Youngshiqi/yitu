@@ -11,6 +11,7 @@ from yitu.addresses.router import router as addresses_router
 from yitu.dispatch.router import router as dispatch_router
 from yitu.exceptions.router import router as exceptions_router
 from yitu.identity.router import router as identity_router
+from yitu.knowledge.router import router as knowledge_router
 from yitu.notifications.router import router as notifications_router
 from yitu.payments.router import router as payments_router
 from yitu.platform.admin_router import router as admin_router
@@ -68,6 +69,7 @@ def create_app() -> FastAPI:
     app.include_router(notifications_router)
     app.include_router(sla_router)
     app.include_router(admin_router)
+    app.include_router(knowledge_router)
 
     @app.middleware("http")
     async def attach_request_id(

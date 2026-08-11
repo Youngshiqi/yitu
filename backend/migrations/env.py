@@ -10,6 +10,7 @@ from yitu.addresses import models as _address_models  # noqa: F401
 from yitu.dispatch import models as _dispatch_models  # noqa: F401
 from yitu.exceptions import models as _exception_models  # noqa: F401
 from yitu.identity import models as _identity_models  # noqa: F401
+from yitu.knowledge import models as _knowledge_models  # noqa: F401
 from yitu.notifications import models as _notification_models  # noqa: F401
 from yitu.payments import models as _payment_models  # noqa: F401
 from yitu.platform.config import get_settings

@@ -18,6 +18,13 @@ class Settings(BaseSettings):
     jwt_expire_minutes: int = 30
     pickup_code_pepper: str = "仅供本地开发的取件码 pepper，请在生产环境替换"
     demo_pickup_code: str = "123456"
+    knowledge_storage_backend: Literal["local", "s3"] = "local"
+    knowledge_storage_root: str = "./var/knowledge"
+    knowledge_max_upload_bytes: int = 20 * 1024 * 1024
+    knowledge_s3_bucket: str = "yitu-knowledge"
+    knowledge_s3_endpoint: str | None = None
+    knowledge_s3_access_key: str | None = None
+    knowledge_s3_secret_key: str | None = None
 
     model_config = SettingsConfigDict(env_prefix="YITU_", env_file=".env", extra="ignore")
 
