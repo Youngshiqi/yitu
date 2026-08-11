@@ -8,3 +8,4 @@ backend/.ruff_cache/
 backend/.uv-cache/
 backend/.venv/
 backend/.coverage
+backend/var/knowledge/documents/
