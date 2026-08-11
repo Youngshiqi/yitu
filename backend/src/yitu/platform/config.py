@@ -26,6 +26,14 @@ class Settings(BaseSettings):
     knowledge_s3_access_key: str | None = None
     knowledge_s3_secret_key: str | None = None
     knowledge_s3_region: str = "ap-guangzhou"
+    embedding_provider: str = "local"
+    embedding_base_url: str | None = None
+    embedding_api_key: str | None = None
+    embedding_model: str = "bge-m3"
+    embedding_dimension: int | None = None
+    mineru_base_url: str = "https://mineru.net"
+    mineru_token: str | None = None
+    mineru_model_version: str = "vlm"
 
     model_config = SettingsConfigDict(env_prefix="YITU_", env_file=".env", extra="ignore")
 
