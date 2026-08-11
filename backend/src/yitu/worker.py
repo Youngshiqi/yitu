@@ -39,7 +39,7 @@ celery_app = Celery(
     "yitu",
     broker=settings.redis_url,
     backend=settings.redis_url,
-    include=["yitu.platform.tasks", "yitu.sla.tasks", "yitu.notifications.tasks"],
+    include=["yitu.platform.tasks", "yitu.sla.tasks", "yitu.notifications.tasks", "yitu.knowledge.tasks"],
 )
 celery_app.conf.update(
     accept_content=["json"],
