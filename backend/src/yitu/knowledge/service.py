@@ -45,7 +45,7 @@ async def upload_document(
         page_count=page_count, uploaded_by=uploaded_by,
         created_at=datetime.now(UTC), updated_at=datetime.now(UTC),
     )
-    store.put(document.object_key, data)
+    store.put(document.object_key, data, "application/pdf")
     session.add(document)
     await session.commit()
     await session.refresh(document)

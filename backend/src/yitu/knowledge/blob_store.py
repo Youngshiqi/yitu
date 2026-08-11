@@ -8,9 +8,10 @@ from yitu.platform.config import get_settings
 
 
 class BlobStore(Protocol):
-    def put(self, key: str, data: bytes) -> None: ...
+    def put(self, key: str, data: bytes, content_type: str) -> None: ...
     def open(self, key: str) -> BinaryIO: ...
     def delete(self, key: str) -> None: ...
+    def presign_get(self, key: str, expires_seconds: int = 900) -> str: ...
 
 
 class LocalBlobStore:
@@ -24,7 +25,9 @@ class LocalBlobStore:
             raise ValueError("invalid object key")
         return path
 
-    def put(self, key: str, data: bytes) -> None:
+    def put(self, key: str, data: bytes, content_type: str) -> None:
+        """本地存储保留统一 MIME 参数，文件内容保持原始字节。"""
+        del content_type
         path = self._path(key)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)
@@ -37,6 +40,11 @@ class LocalBlobStore:
         if path.exists():
             path.unlink()
 
+    def presign_get(self, key: str, expires_seconds: int = 900) -> str:
+        """本地存储没有可供外部 MinerU 访问的签名 URL。"""
+        del key, expires_seconds
+        raise NotImplementedError("local BlobStore does not support presigned URLs")
+
 
 class S3BlobStore:
     def __init__(self, endpoint: str, bucket: str, access_key: str, secret_key: str, region: str) -> None:
@@ -46,8 +54,9 @@ class S3BlobStore:
             aws_secret_access_key=secret_key, region_name=region,
         )
 
-    def put(self, key: str, data: bytes) -> None:
-        self.client.put_object(Bucket=self.bucket, Key=key, Body=data, ContentType="application/pdf", ServerSideEncryption="AES256")
+    def put(self, key: str, data: bytes, content_type: str) -> None:
+        """写入私有 COS 对象，并使用 COS 托管密钥进行服务端加密。"""
+        self.client.put_object(Bucket=self.bucket, Key=key, Body=data, ContentType=content_type, ServerSideEncryption="AES256")
 
     def open(self, key: str) -> BinaryIO:
         response = self.client.get_object(Bucket=self.bucket, Key=key)
@@ -55,6 +64,16 @@ class S3BlobStore:
 
     def delete(self, key: str) -> None:
         self.client.delete_object(Bucket=self.bucket, Key=key)
+
+    def presign_get(self, key: str, expires_seconds: int = 900) -> str:
+        """生成仅供解析服务短时读取私有对象的签名 URL。"""
+        if not 60 <= expires_seconds <= 3600:
+            raise ValueError("presigned URL expiry must be between 60 and 3600 seconds")
+        return str(self.client.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": self.bucket, "Key": key},
+            ExpiresIn=expires_seconds,
+        ))
 
 
 def get_blob_store() -> BlobStore:
