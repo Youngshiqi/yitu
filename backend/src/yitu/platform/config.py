@@ -34,6 +34,11 @@ class Settings(BaseSettings):
     mineru_base_url: str = "https://mineru.net"
     mineru_token: str | None = None
     mineru_model_version: str = "vlm"
+    agent_model_provider: str = "fixed"
+    agent_model_base_url: str | None = None
+    agent_model_api_key: str | None = None
+    agent_model_name: str = ""
+    agent_model_timeout_seconds: float = 60.0
 
     model_config = SettingsConfigDict(env_prefix="YITU_", env_file=".env", extra="ignore")
 

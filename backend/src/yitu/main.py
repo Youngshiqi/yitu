@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from starlette.middleware.base import RequestResponseEndpoint
 
 from yitu.addresses.router import router as addresses_router
+from yitu.agent.router import router as agent_router
 from yitu.dispatch.router import router as dispatch_router
 from yitu.exceptions.router import router as exceptions_router
 from yitu.identity.router import router as identity_router
@@ -70,6 +71,7 @@ def create_app() -> FastAPI:
     app.include_router(sla_router)
     app.include_router(admin_router)
     app.include_router(knowledge_router)
+    app.include_router(agent_router)
 
     @app.middleware("http")
     async def attach_request_id(
