@@ -16,6 +16,7 @@ from yitu.agent.state import AgentState
 from yitu.agent.tools.base import ToolContext, ToolResult
 from yitu.agent.tools.knowledge import KnowledgeSearchInput, KnowledgeSearchTool
 from yitu.agent.tools.shipments import ShipmentReadInput, ShipmentReadTool
+from yitu.agent.tracing import AgentTrace
 from yitu.identity.service import CurrentUser
 from yitu.platform.audit import AuditService
 from yitu.platform.clock import Clock
@@ -80,6 +81,8 @@ class AgentConversationService:
         model: ModelAdapter,
     ) -> AgentTurnView:
         conversation = await self.get_owned(conversation_id, actor)
+        trace = AgentTrace()
+        trace.record("message.received", role="user")
         now = Clock.now()
         user_message = AgentMessage(
             conversation_id=conversation.id,
@@ -97,6 +100,12 @@ class AgentConversationService:
         graph_result = await build_agent_graph().ainvoke(
             self._initial_graph_state(conversation.id, actor, content, history)
         )
+        trace.record(
+            "graph.routed",
+            route=graph_result.get("route"),
+            intent=graph_result.get("intent"),
+            risk=graph_result.get("risk"),
+        )
         tool_result: ToolResult[BaseModel] | None = None
         route = graph_result.get("route")
         if route == "knowledge":
@@ -105,18 +114,21 @@ class AgentConversationService:
                 ToolContext(actor=actor, session=self._session),
             )
             reply = self._knowledge_reply(tool_result)
+            trace.record("tool.knowledge", found=tool_result.found)
         elif route == "read_tool":
             tool_result = await ShipmentReadTool().execute(
                 ShipmentReadInput(shipment_no=_extract_shipment_no(content)),
                 ToolContext(actor=actor, session=self._session),
             )
             reply = self._shipment_reply(tool_result)
+            trace.record("tool.shipment", found=tool_result.found)
         elif route == "respond":
             try:
                 reply = await model.complete(build_model_context(
                     [ModelMessage(role=item.role, content=item.content) for item in history],
                     memories,
                 ))
+                trace.record("model.completed")
             except ModelUnavailableError as error:
                 # 用户消息已单独提交，服务恢复后可以从同一会话继续重试。
                 conversation.status = "WAITING_RETRY"
@@ -136,6 +148,7 @@ class AgentConversationService:
             role="assistant",
             content=reply,
             envelope={
+                "trace_id": str(trace.trace_id),
                 "intent": graph_result.get("intent"),
                 "risk": graph_result.get("risk"),
                 "route": route,
@@ -143,6 +156,7 @@ class AgentConversationService:
                 "tool_result": tool_result.model_dump(mode="json")
                 if tool_result is not None
                 else None,
+                "trace": trace.summary(),
             },
             created_at=Clock.now(),
         )

@@ -1,0 +1,4 @@
+[
+  {"name": "secret_redaction", "input": "token sk-abcdefghijklmnop", "expected": "[密钥已隐藏]"},
+  {"name": "phone_redaction", "input": "联系 13800138000", "expected": "[手机号已隐藏]"}
+]
