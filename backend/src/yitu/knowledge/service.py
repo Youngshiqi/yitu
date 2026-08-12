@@ -2,6 +2,10 @@ from datetime import UTC, datetime
 from hashlib import sha256
 from uuid import UUID, uuid4
 
+from botocore.exceptions import (  # type: ignore[import-untyped]
+    BotoCoreError,
+    ClientError,
+)
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -45,7 +49,15 @@ async def upload_document(
         page_count=page_count, uploaded_by=uploaded_by,
         created_at=datetime.now(UTC), updated_at=datetime.now(UTC),
     )
-    store.put(document.object_key, data, "application/pdf")
+    try:
+        store.put(document.object_key, data, "application/pdf")
+    except (BotoCoreError, ClientError, OSError):
+        # 外部存储异常统一转换，API 不泄露 COS 请求、桶名或签名细节。
+        raise AppError(
+            "KNOWLEDGE_STORAGE_UNAVAILABLE",
+            "knowledge storage is temporarily unavailable",
+            503,
+        ) from None
     session.add(document)
     await session.commit()
     await session.refresh(document)

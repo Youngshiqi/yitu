@@ -17,7 +17,8 @@ from yitu.platform.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-QWEN_BATCH_SIZE = 32
+# 百炼 qwen3.7-text-embedding 单次请求最多接收 20 条文本。
+QWEN_BATCH_SIZE = 20
 QWEN_EMBEDDING_DIMENSION = 1024
 
 
@@ -99,7 +100,7 @@ class QwenEmbeddingProvider:
         self._client.close()
 
     def embed(self, texts: list[str]) -> list[list[float]]:
-        """按 32 条分批生成向量，并保持与输入文本相同的顺序。"""
+        """按 20 条分批生成向量，并保持与输入文本相同的顺序。"""
         if not texts:
             return []
 

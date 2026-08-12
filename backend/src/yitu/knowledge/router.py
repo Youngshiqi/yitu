@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Query, UploadFile
@@ -40,6 +41,14 @@ async def upload_knowledge_document(
         content_type=file.content_type, data=data, uploaded_by=user.id,
         max_bytes=get_settings().knowledge_max_upload_bytes,
     )
+    # 原文件提交成功后再进入异步队列，避免 Worker 读取尚未持久化的对象。
+    document.status = DocumentStatus.QUEUED
+    document.updated_at = datetime.now(UTC)
+    await session.commit()
+    from yitu.knowledge.tasks import submit_mineru_document
+
+    submit_mineru_document.delay(str(document.id))
+    await session.refresh(document)
     return KnowledgeDocumentView.model_validate(document)
 
 

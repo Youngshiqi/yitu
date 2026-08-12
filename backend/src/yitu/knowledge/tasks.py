@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from yitu.identity import models as _identity_models  # noqa: F401
 from yitu.knowledge.artifacts import MinerUArtifactError, extract_mineru_archive
 from yitu.knowledge.blob_store import BlobStore, get_blob_store
+from yitu.knowledge.embedding import EmbeddingPermanentError, EmbeddingProvider
 from yitu.knowledge.indexing import build_index_version
 from yitu.knowledge.mineru_client import (
     MinerUClient,
@@ -202,8 +203,9 @@ async def _poll_mineru_document(
     *,
     store: BlobStore | None = None,
     client: MinerUGateway | None = None,
+    embedding_provider: EmbeddingProvider | None = None,
 ) -> PollOutcome:
-    """使用数据库中的 task_id 恢复轮询，并原子完成解析状态。"""
+    """使用数据库 task_id 恢复轮询，并以可注入向量模型原子完成解析。"""
     async with SessionFactory() as session, session.begin():
         document = await _locked_document(session, document_id)
         if document.status != DocumentStatus.PARSING:
@@ -267,7 +269,11 @@ async def _poll_mineru_document(
             document.markdown_artifact_key = markdown_key
             document.parse_finished_at = now
             document.updated_at = now
-            await build_index_version(session, document.id)
+            await build_index_version(
+                session,
+                document.id,
+                provider=embedding_provider,
+            )
             document.status = transition(
                 document.status,
                 DocumentStatus.REVIEW_REQUIRED,
@@ -280,7 +286,7 @@ async def _poll_mineru_document(
         return PollOutcome.COMPLETED
     except MinerURetryableError:
         raise
-    except (MinerUPermanentError, MinerUArtifactError):
+    except (MinerUPermanentError, MinerUArtifactError, EmbeddingPermanentError):
         logger.warning(
             "MinerU 解析永久失败 document_id=%s task_id=%s",
             document_id,

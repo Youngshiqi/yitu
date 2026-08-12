@@ -3,6 +3,7 @@ from pathlib import Path
 from typing import BinaryIO, Protocol
 
 import boto3  # type: ignore[import-untyped]
+from botocore.config import Config  # type: ignore[import-untyped]
 
 from yitu.platform.config import get_settings
 
@@ -52,6 +53,8 @@ class S3BlobStore:
         self.client = boto3.client(
             "s3", endpoint_url=endpoint, aws_access_key_id=access_key,
             aws_secret_access_key=secret_key, region_name=region,
+            # 腾讯 COS 仅接受 bucket 位于主机名中的 virtual-hosted-style 请求。
+            config=Config(s3={"addressing_style": "virtual"}),
         )
 
     def put(self, key: str, data: bytes, content_type: str) -> None:
