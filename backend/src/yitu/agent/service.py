@@ -1,13 +1,16 @@
 """Agent 会话持久化和模型调用服务。"""
 
+from time import monotonic
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from yitu.agent.graph import build_agent_graph
 from yitu.agent.model_adapter import ModelAdapter, ModelMessage, ModelUnavailableError
 from yitu.agent.models import AgentConversation, AgentMessage
 from yitu.agent.schemas import AgentTurnView, MessageView
+from yitu.agent.state import AgentState
 from yitu.identity.service import CurrentUser
 from yitu.platform.clock import Clock
 from yitu.platform.errors import AppError
@@ -84,26 +87,41 @@ class AgentConversationService:
         await self._session.commit()
 
         history = await self._load_messages(conversation.id)
-        try:
-            reply = await model.complete(
-                [ModelMessage(role=item.role, content=item.content) for item in history]
-            )
-        except ModelUnavailableError as error:
-            # 用户消息已单独提交，服务恢复后可以从同一会话继续重试。
-            conversation.status = "WAITING_RETRY"
-            conversation.updated_at = Clock.now()
-            await self._session.commit()
-            raise AppError(
-                code="AGENT_MODEL_UNAVAILABLE",
-                message="AI 服务暂时不可用，会话消息已保存，请稍后重试",
-                status_code=503,
-            ) from error
+        graph_result = await build_agent_graph().ainvoke(
+            self._initial_graph_state(conversation.id, actor, content, history)
+        )
+        if graph_result.get("route") == "respond":
+            try:
+                reply = await model.complete(
+                    [
+                        ModelMessage(role=item.role, content=item.content)
+                        for item in history
+                    ]
+                )
+            except ModelUnavailableError as error:
+                # 用户消息已单独提交，服务恢复后可以从同一会话继续重试。
+                conversation.status = "WAITING_RETRY"
+                conversation.updated_at = Clock.now()
+                await self._session.commit()
+                raise AppError(
+                    code="AGENT_MODEL_UNAVAILABLE",
+                    message="AI 服务暂时不可用，会话消息已保存，请稍后重试",
+                    status_code=503,
+                ) from error
+        else:
+            # 未接入的工具分支只返回图生成的安全动作，不让模型伪造业务结果。
+            reply = graph_result.get("response", "请求已进入受控处理流程。")
 
         assistant_message = AgentMessage(
             conversation_id=conversation.id,
             role="assistant",
             content=reply,
-            envelope=None,
+            envelope={
+                "intent": graph_result.get("intent"),
+                "risk": graph_result.get("risk"),
+                "route": graph_result.get("route"),
+                "next_action": graph_result.get("next_action"),
+            },
             created_at=Clock.now(),
         )
         self._session.add(assistant_message)
@@ -114,6 +132,31 @@ class AgentConversationService:
             user_message=MessageView.model_validate(user_message),
             assistant_message=MessageView.model_validate(assistant_message),
         )
+
+    @staticmethod
+    def _initial_graph_state(
+        conversation_id: UUID,
+        actor: CurrentUser,
+        content: str,
+        history: list[AgentMessage],
+    ) -> AgentState:
+        """从可信身份和持久化历史构造有界图状态。"""
+        return {
+            "conversation_id": str(conversation_id),
+            "user_id": str(actor.id),
+            "user_role": actor.role.value,
+            "user_message": content,
+            "history": [
+                {"role": message.role, "content": message.content}
+                for message in history
+            ],
+            "turn_count": 0,
+            "tool_call_count": 0,
+            "max_turns": 8,
+            "max_tool_calls": 4,
+            "execution_started_at": monotonic(),
+            "timeout_seconds": 30.0,
+        }
 
     async def _load_messages(self, conversation_id: UUID) -> list[AgentMessage]:
         statement = (
