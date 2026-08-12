@@ -2,11 +2,12 @@
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Depends, Header, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yitu.agent.drafts import DraftPatch, DraftService, DraftValidationView, DraftView
+from yitu.agent.grants import GrantService, GrantView
 from yitu.agent.model_adapter import ModelAdapter, get_model_adapter
 from yitu.agent.models import AgentConversation, AgentMessage
 from yitu.agent.schemas import (
@@ -18,8 +19,10 @@ from yitu.agent.schemas import (
 )
 from yitu.agent.service import AgentConversationService
 from yitu.agent.sse import agent_message_events, validate_agent_cursor
+from yitu.agent.write_tools import AgentWriteService
 from yitu.identity.service import CurrentUser, get_current_user
 from yitu.platform.database import get_session
+from yitu.shipments.service import ShipmentView
 
 router = APIRouter(prefix="/api/v1/agent/conversations", tags=["agent"])
 _session = Depends(get_session)
@@ -103,6 +106,36 @@ async def validate_draft(
     """调用正式地址校验和计价服务，生成待确认数据。"""
     await AgentConversationService(session).get_owned(conversation_id, user)
     result = await DraftService(session).validate_and_quote(conversation_id, user)
+    await session.commit()
+    return result
+
+
+@router.post("/{conversation_id}/grant", response_model=GrantView, status_code=201)
+async def issue_grant(
+    conversation_id: UUID,
+    user: CurrentUser = _current_user,
+    session: AsyncSession = _session,
+) -> GrantView:
+    """用户明确确认后签发五分钟有效的一次性运单创建授权。"""
+    await AgentConversationService(session).get_owned(conversation_id, user)
+    result = await GrantService(session).issue(conversation_id, user)
+    await session.commit()
+    return result
+
+
+@router.post("/grants/{grant_id}/consume", response_model=ShipmentView, status_code=201)
+async def consume_grant(
+    grant_id: UUID,
+    request: Request,
+    user: CurrentUser = _current_user,
+    session: AsyncSession = _session,
+) -> ShipmentView:
+    """原子消费授权并调用共享运单创建服务，重复请求不会重复写入。"""
+    result = await AgentWriteService(session).create_shipment(
+        grant_id,
+        user,
+        request.state.request_id,
+    )
     await session.commit()
     return result
 

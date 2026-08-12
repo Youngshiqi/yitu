@@ -84,3 +84,36 @@ class AgentShipmentDraft(Base):
     )
     quote_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class AgentActionGrant(Base):
+    """保存一次性敏感动作授权，授权内容与草稿和报价版本绑定。"""
+
+    __tablename__ = "agent_action_grants"
+    __table_args__ = (
+        UniqueConstraint("nonce", name="uq_agent_action_grants_nonce"),
+        Index("ix_agent_action_grants_owner_expires", "owner_id", "expires_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    conversation_id: Mapped[UUID] = mapped_column(
+        ForeignKey("agent_conversations.id", ondelete="CASCADE"), nullable=False
+    )
+    owner_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    action: Mapped[str] = mapped_column(String(64), nullable=False)
+    draft_id: Mapped[UUID] = mapped_column(
+        ForeignKey("agent_shipment_drafts.id", ondelete="CASCADE"), nullable=False
+    )
+    draft_revision: Mapped[int] = mapped_column(Integer, nullable=False)
+    quote_id: Mapped[UUID] = mapped_column(
+        ForeignKey("quote_snapshots.id", ondelete="RESTRICT"), nullable=False
+    )
+    quote_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    command_snapshot: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
+    command_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    nonce: Mapped[str] = mapped_column(String(64), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
