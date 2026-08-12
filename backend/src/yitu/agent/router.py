@@ -1,4 +1,4 @@
-"""Agent 会话、消息和 SSE API。"""
+"""Agent 会话、记忆、草稿、授权和 SSE API。"""
 
 from uuid import UUID
 
@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from yitu.agent.drafts import DraftPatch, DraftService, DraftValidationView, DraftView
 from yitu.agent.grants import GrantService, GrantView
+from yitu.agent.memory import MemoryCreate, MemoryService, MemoryView
 from yitu.agent.model_adapter import ModelAdapter, get_model_adapter
 from yitu.agent.models import AgentConversation, AgentMessage
 from yitu.agent.schemas import (
@@ -32,51 +33,68 @@ _last_event_id = Header(default=None, alias="Last-Event-ID")
 
 
 @router.post("", response_model=ConversationView, status_code=201)
-async def create_conversation(
-    request: ConversationCreate,
-    user: CurrentUser = _current_user,
-    session: AsyncSession = _session,
-) -> AgentConversation:
-    """为当前用户创建一个可恢复会话。"""
+async def create_conversation(request: ConversationCreate, user: CurrentUser = _current_user, session: AsyncSession = _session) -> AgentConversation:
+    """为当前用户创建可恢复会话。"""
     return await AgentConversationService(session).create(user, title=request.title)
 
 
 @router.get("", response_model=list[ConversationView])
-async def list_conversations(
-    user: CurrentUser = _current_user,
-    session: AsyncSession = _session,
-) -> list[AgentConversation]:
-    """只列出当前用户自己的会话。"""
+async def list_conversations(user: CurrentUser = _current_user, session: AsyncSession = _session) -> list[AgentConversation]:
+    """列出当前用户会话。"""
     return await AgentConversationService(session).list_conversations(user)
 
 
+# 固定路径必须声明在 /{conversation_id} 前，避免被动态 UUID 路由吞掉。
+@router.get("/memories", response_model=list[MemoryView])
+async def list_memories(user: CurrentUser = _current_user, session: AsyncSession = _session) -> list[MemoryView]:
+    """列出当前用户有效的持久记忆。"""
+    return await MemoryService(session).list(user)
+
+
+@router.post("/memories", response_model=MemoryView, status_code=201)
+async def create_memory(body: MemoryCreate, user: CurrentUser = _current_user, session: AsyncSession = _session) -> MemoryView:
+    """用户明确确认后创建持久记忆。"""
+    result = await MemoryService(session).create(body, user)
+    await session.commit()
+    return result
+
+
+@router.delete("/memories/{memory_id}", status_code=204)
+async def delete_memory(memory_id: UUID, user: CurrentUser = _current_user, session: AsyncSession = _session) -> None:
+    """停用当前用户的一条持久记忆。"""
+    await MemoryService(session).delete(memory_id, user)
+    await session.commit()
+
+
+@router.post("/grants/{grant_id}/consume", response_model=ShipmentView, status_code=201)
+async def consume_grant(grant_id: UUID, request: Request, user: CurrentUser = _current_user, session: AsyncSession = _session) -> ShipmentView:
+    """原子消费授权并调用共享运单创建服务。"""
+    result = await AgentWriteService(session).create_shipment(grant_id, user, request.state.request_id)
+    await session.commit()
+    return result
+
+
 @router.get("/{conversation_id}", response_model=ConversationView)
-async def get_conversation(
-    conversation_id: UUID,
-    user: CurrentUser = _current_user,
-    session: AsyncSession = _session,
-) -> AgentConversation:
-    """读取当前用户拥有的会话摘要。"""
+async def get_conversation(conversation_id: UUID, user: CurrentUser = _current_user, session: AsyncSession = _session) -> AgentConversation:
+    """读取当前用户拥有的会话。"""
     return await AgentConversationService(session).get_owned(conversation_id, user)
 
 
+@router.delete("/{conversation_id}", status_code=204)
+async def delete_conversation(conversation_id: UUID, request: Request, user: CurrentUser = _current_user, session: AsyncSession = _session) -> None:
+    """删除会话正文和关联数据，仅保留匿名审计摘要。"""
+    await AgentConversationService(session).delete_conversation(conversation_id, user, request.state.request_id)
+    await session.commit()
+
+
 @router.get("/{conversation_id}/messages", response_model=list[MessageView])
-async def list_messages(
-    conversation_id: UUID,
-    user: CurrentUser = _current_user,
-    session: AsyncSession = _session,
-) -> list[AgentMessage]:
-    """按稳定顺序恢复当前用户的会话历史。"""
+async def list_messages(conversation_id: UUID, user: CurrentUser = _current_user, session: AsyncSession = _session) -> list[AgentMessage]:
+    """按稳定顺序恢复当前用户的会话消息。"""
     return await AgentConversationService(session).list_messages(conversation_id, user)
 
 
 @router.get("/{conversation_id}/draft", response_model=DraftView)
-async def get_draft(
-    conversation_id: UUID,
-    user: CurrentUser = _current_user,
-    session: AsyncSession = _session,
-) -> DraftView:
-    """恢复当前用户会话中的结构化运单草稿。"""
+async def get_draft(conversation_id: UUID, user: CurrentUser = _current_user, session: AsyncSession = _session) -> DraftView:
     await AgentConversationService(session).get_owned(conversation_id, user)
     draft = await DraftService(session).get_or_create(conversation_id, user)
     await session.commit()
@@ -84,13 +102,7 @@ async def get_draft(
 
 
 @router.patch("/{conversation_id}/draft", response_model=DraftView)
-async def update_draft(
-    conversation_id: UUID,
-    request: DraftPatch,
-    user: CurrentUser = _current_user,
-    session: AsyncSession = _session,
-) -> DraftView:
-    """合并结构化草稿字段，并立即失效旧报价。"""
+async def update_draft(conversation_id: UUID, request: DraftPatch, user: CurrentUser = _current_user, session: AsyncSession = _session) -> DraftView:
     await AgentConversationService(session).get_owned(conversation_id, user)
     result = await DraftService(session).update(conversation_id, user, request)
     await session.commit()
@@ -98,12 +110,7 @@ async def update_draft(
 
 
 @router.post("/{conversation_id}/draft/validate", response_model=DraftValidationView)
-async def validate_draft(
-    conversation_id: UUID,
-    user: CurrentUser = _current_user,
-    session: AsyncSession = _session,
-) -> DraftValidationView:
-    """调用正式地址校验和计价服务，生成待确认数据。"""
+async def validate_draft(conversation_id: UUID, user: CurrentUser = _current_user, session: AsyncSession = _session) -> DraftValidationView:
     await AgentConversationService(session).get_owned(conversation_id, user)
     result = await DraftService(session).validate_and_quote(conversation_id, user)
     await session.commit()
@@ -111,68 +118,20 @@ async def validate_draft(
 
 
 @router.post("/{conversation_id}/grant", response_model=GrantView, status_code=201)
-async def issue_grant(
-    conversation_id: UUID,
-    user: CurrentUser = _current_user,
-    session: AsyncSession = _session,
-) -> GrantView:
-    """用户明确确认后签发五分钟有效的一次性运单创建授权。"""
+async def issue_grant(conversation_id: UUID, user: CurrentUser = _current_user, session: AsyncSession = _session) -> GrantView:
     await AgentConversationService(session).get_owned(conversation_id, user)
     result = await GrantService(session).issue(conversation_id, user)
     await session.commit()
     return result
 
 
-@router.post("/grants/{grant_id}/consume", response_model=ShipmentView, status_code=201)
-async def consume_grant(
-    grant_id: UUID,
-    request: Request,
-    user: CurrentUser = _current_user,
-    session: AsyncSession = _session,
-) -> ShipmentView:
-    """原子消费授权并调用共享运单创建服务，重复请求不会重复写入。"""
-    result = await AgentWriteService(session).create_shipment(
-        grant_id,
-        user,
-        request.state.request_id,
-    )
-    await session.commit()
-    return result
-
-
 @router.post("/{conversation_id}/messages", response_model=AgentTurnView)
-async def send_message(
-    conversation_id: UUID,
-    request: MessageCreate,
-    user: CurrentUser = _current_user,
-    session: AsyncSession = _session,
-    model: ModelAdapter = _model,
-) -> AgentTurnView:
-    """保存用户消息，并通过可替换模型生成持久化回复。"""
-    return await AgentConversationService(session).send_message(
-        conversation_id,
-        user,
-        request.content,
-        model,
-    )
+async def send_message(conversation_id: UUID, request: MessageCreate, user: CurrentUser = _current_user, session: AsyncSession = _session, model: ModelAdapter = _model) -> AgentTurnView:
+    return await AgentConversationService(session).send_message(conversation_id, user, request.content, model)
 
 
 @router.get("/{conversation_id}/stream")
-async def conversation_stream(
-    conversation_id: UUID,
-    user: CurrentUser = _current_user,
-    session: AsyncSession = _session,
-    last_event_id: UUID | None = _last_event_id,
-) -> StreamingResponse:
-    """返回有限消息批次和心跳，支持标准 Last-Event-ID 断线续传。"""
+async def conversation_stream(conversation_id: UUID, user: CurrentUser = _current_user, session: AsyncSession = _session, last_event_id: UUID | None = _last_event_id) -> StreamingResponse:
     await AgentConversationService(session).get_owned(conversation_id, user)
     await validate_agent_cursor(session, conversation_id, last_event_id)
-    return StreamingResponse(
-        agent_message_events(
-            session,
-            conversation_id,
-            last_event_id=last_event_id,
-        ),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache"},
-    )
+    return StreamingResponse(agent_message_events(session, conversation_id, last_event_id=last_event_id), media_type="text/event-stream", headers={"Cache-Control": "no-cache"})

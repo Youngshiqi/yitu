@@ -7,15 +7,17 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from yitu.agent.context import build_model_context
 from yitu.agent.graph import build_agent_graph
 from yitu.agent.model_adapter import ModelAdapter, ModelMessage, ModelUnavailableError
-from yitu.agent.models import AgentConversation, AgentMessage
+from yitu.agent.models import AgentConversation, AgentMemory, AgentMessage
 from yitu.agent.schemas import AgentTurnView, MessageView
 from yitu.agent.state import AgentState
 from yitu.agent.tools.base import ToolContext, ToolResult
 from yitu.agent.tools.knowledge import KnowledgeSearchInput, KnowledgeSearchTool
 from yitu.agent.tools.shipments import ShipmentReadInput, ShipmentReadTool
 from yitu.identity.service import CurrentUser
+from yitu.platform.audit import AuditService
 from yitu.platform.clock import Clock
 from yitu.platform.errors import AppError
 
@@ -91,6 +93,7 @@ class AgentConversationService:
         await self._session.commit()
 
         history = await self._load_messages(conversation.id)
+        memories = await self._load_memories(actor.id)
         graph_result = await build_agent_graph().ainvoke(
             self._initial_graph_state(conversation.id, actor, content, history)
         )
@@ -110,12 +113,10 @@ class AgentConversationService:
             reply = self._shipment_reply(tool_result)
         elif route == "respond":
             try:
-                reply = await model.complete(
-                    [
-                        ModelMessage(role=item.role, content=item.content)
-                        for item in history
-                    ]
-                )
+                reply = await model.complete(build_model_context(
+                    [ModelMessage(role=item.role, content=item.content) for item in history],
+                    memories,
+                ))
             except ModelUnavailableError as error:
                 # 用户消息已单独提交，服务恢复后可以从同一会话继续重试。
                 conversation.status = "WAITING_RETRY"
@@ -200,6 +201,24 @@ class AgentConversationService:
             .order_by(AgentMessage.created_at, AgentMessage.id)
         )
         return list((await self._session.scalars(statement)).all())
+
+    async def delete_conversation(self, conversation_id: UUID, actor: CurrentUser, request_id: str) -> None:
+        """删除会话正文和关联草稿/授权，保留不含正文的匿名审计记录。"""
+        conversation = await self.get_owned(conversation_id, actor)
+        await AuditService(self._session).record(
+            actor=str(actor.id), action="agent.conversation.deleted",
+            resource="agent-conversation:anonymous", before_summary={"conversation_id": str(conversation.id)},
+            after_summary={"deleted": True}, reason="user_requested", request_id=request_id,
+        )
+        await self._session.delete(conversation)
+        await self._session.flush()
+
+    async def _load_memories(self, owner_id: UUID) -> list[str]:
+        rows = await self._session.scalars(
+            select(AgentMemory).where(AgentMemory.owner_id == owner_id, AgentMemory.active.is_(True))
+        )
+        now = Clock.now()
+        return [row.content for row in rows.all() if row.expires_at is None or row.expires_at > now]
 
 
 def _extract_shipment_no(content: str) -> str | None:
