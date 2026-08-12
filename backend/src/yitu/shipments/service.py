@@ -1,12 +1,14 @@
+from datetime import datetime
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yitu.addresses.models import Address
 from yitu.identity.models import Role
 from yitu.identity.service import CurrentUser, require_resource_owner
+from yitu.payments.models import PaymentTransaction
 from yitu.platform.audit import AuditService
 from yitu.platform.errors import AppError
 from yitu.platform.idempotency import (
@@ -19,9 +21,11 @@ from yitu.shipments.enums import ShipmentStatus
 from yitu.shipments.models import Shipment
 from yitu.shipments.schemas import CreateShipmentCommand
 from yitu.shipments.state_machine import transition
+from yitu.sla.models import SLAInstance
 from yitu.stations.service import match_station
 from yitu.tracking.models import TrackingEvent
-from yitu.tracking.service import append_tracking_event
+from yitu.tracking.schemas import TrackingEventView
+from yitu.tracking.service import append_tracking_event, list_tracking_events
 
 
 class ShipmentView(BaseModel):
@@ -41,6 +45,16 @@ class ShipmentListResponse(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+class ShipmentReadView(BaseModel):
+    """供只读工具使用的最小运单聚合，不包含地址和联系方式。"""
+
+    shipment: ShipmentView
+    tracking: list[TrackingEventView]
+    paid_total_cents: int
+    eta_at: datetime | None
+    promised_delivery_at: datetime | None
 
 
 class ShipmentApplicationService:
@@ -145,6 +159,60 @@ class ShipmentApplicationService:
             scope, idempotency_key, request_hash, operation
         )
         return ShipmentView.model_validate(response.body)
+
+    async def get_read_view(
+        self,
+        actor: CurrentUser,
+        *,
+        shipment_no: str | None = None,
+    ) -> ShipmentReadView | None:
+        """按当前客户范围聚合运单、轨迹、净支付金额和最新 ETA。"""
+        if actor.role is not Role.CUSTOMER:
+            raise AppError("FORBIDDEN_ROLE", "角色权限不足", 403)
+        statement = select(Shipment).where(Shipment.owner_id == actor.id)
+        if shipment_no is not None:
+            statement = statement.where(Shipment.shipment_no == shipment_no)
+        shipment = await self._session.scalar(
+            statement.order_by(Shipment.shipment_no.desc()).limit(1)
+        )
+        if shipment is None:
+            return None
+
+        payment_amount = await self._session.scalar(
+            select(
+                func.coalesce(
+                    func.sum(
+                        case(
+                            (
+                                PaymentTransaction.transaction_type == "REFUND",
+                                -PaymentTransaction.amount_cents,
+                            ),
+                            else_=PaymentTransaction.amount_cents,
+                        )
+                    ),
+                    0,
+                )
+            ).where(
+                PaymentTransaction.shipment_id == shipment.id,
+                PaymentTransaction.status == "SUCCEEDED",
+            )
+        )
+        latest_sla = await self._session.scalar(
+            select(SLAInstance)
+            .where(SLAInstance.shipment_id == shipment.id)
+            .order_by(SLAInstance.started_at.desc().nullslast(), SLAInstance.id.desc())
+            .limit(1)
+        )
+        tracking = await list_tracking_events(self._session, shipment.id)
+        return ShipmentReadView(
+            shipment=ShipmentView.model_validate(shipment),
+            tracking=[TrackingEventView.model_validate(event) for event in tracking],
+            paid_total_cents=int(payment_amount or 0),
+            eta_at=latest_sla.eta_at if latest_sla is not None else None,
+            promised_delivery_at=(
+                latest_sla.promised_delivery_at if latest_sla is not None else None
+            ),
+        )
 
 
 class ShipmentTransitionService:

@@ -3,6 +3,7 @@
 from time import monotonic
 from uuid import UUID
 
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,6 +12,9 @@ from yitu.agent.model_adapter import ModelAdapter, ModelMessage, ModelUnavailabl
 from yitu.agent.models import AgentConversation, AgentMessage
 from yitu.agent.schemas import AgentTurnView, MessageView
 from yitu.agent.state import AgentState
+from yitu.agent.tools.base import ToolContext, ToolResult
+from yitu.agent.tools.knowledge import KnowledgeSearchInput, KnowledgeSearchTool
+from yitu.agent.tools.shipments import ShipmentReadInput, ShipmentReadTool
 from yitu.identity.service import CurrentUser
 from yitu.platform.clock import Clock
 from yitu.platform.errors import AppError
@@ -90,7 +94,21 @@ class AgentConversationService:
         graph_result = await build_agent_graph().ainvoke(
             self._initial_graph_state(conversation.id, actor, content, history)
         )
-        if graph_result.get("route") == "respond":
+        tool_result: ToolResult[BaseModel] | None = None
+        route = graph_result.get("route")
+        if route == "knowledge":
+            tool_result = await KnowledgeSearchTool().execute(
+                KnowledgeSearchInput(query=content),
+                ToolContext(actor=actor, session=self._session),
+            )
+            reply = self._knowledge_reply(tool_result)
+        elif route == "read_tool":
+            tool_result = await ShipmentReadTool().execute(
+                ShipmentReadInput(shipment_no=_extract_shipment_no(content)),
+                ToolContext(actor=actor, session=self._session),
+            )
+            reply = self._shipment_reply(tool_result)
+        elif route == "respond":
             try:
                 reply = await model.complete(
                     [
@@ -119,8 +137,11 @@ class AgentConversationService:
             envelope={
                 "intent": graph_result.get("intent"),
                 "risk": graph_result.get("risk"),
-                "route": graph_result.get("route"),
+                "route": route,
                 "next_action": graph_result.get("next_action"),
+                "tool_result": tool_result.model_dump(mode="json")
+                if tool_result is not None
+                else None,
             },
             created_at=Clock.now(),
         )
@@ -132,6 +153,20 @@ class AgentConversationService:
             user_message=MessageView.model_validate(user_message),
             assistant_message=MessageView.model_validate(assistant_message),
         )
+
+    @staticmethod
+    def _knowledge_reply(result: ToolResult[BaseModel]) -> str:
+        """将 RAG 结果转为谨慎摘要，完整证据保留在结构化信封。"""
+        if not result.found:
+            return "暂未找到足够的已发布知识证据，无法确认该规则。"
+        return "已找到已发布物流知识证据，请结合消息中的引用查看原文。"
+
+    @staticmethod
+    def _shipment_reply(result: ToolResult[BaseModel]) -> str:
+        """将本人运单工具结果转为不泄漏额外个人信息的摘要。"""
+        if not result.found:
+            return "没有找到当前登录用户有权访问的运单。"
+        return "已读取你的运单、轨迹、费用和 ETA 信息。"
 
     @staticmethod
     def _initial_graph_state(
@@ -165,3 +200,11 @@ class AgentConversationService:
             .order_by(AgentMessage.created_at, AgentMessage.id)
         )
         return list((await self._session.scalars(statement)).all())
+
+
+def _extract_shipment_no(content: str) -> str | None:
+    """仅提取显式 YT 运单号；未提供时由服务返回最近一票本人运单。"""
+    import re
+
+    match = re.search(r"\bYT[A-Z0-9]{4,32}\b", content.upper())
+    return match.group(0) if match else None
