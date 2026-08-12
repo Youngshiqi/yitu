@@ -3,7 +3,15 @@
 from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, Text
+from sqlalchemy import (
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -49,3 +57,30 @@ class AgentMessage(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     envelope: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class AgentShipmentDraft(Base):
+    """保存当前会话唯一的运单草稿快照和报价绑定。"""
+
+    __tablename__ = "agent_shipment_drafts"
+    __table_args__ = (
+        UniqueConstraint("conversation_id", name="uq_agent_shipment_drafts_conversation"),
+        Index("ix_agent_shipment_drafts_owner_updated", "owner_id", "updated_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    conversation_id: Mapped[UUID] = mapped_column(
+        ForeignKey("agent_conversations.id", ondelete="CASCADE"), nullable=False
+    )
+    owner_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
+    )
+    payload: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False, default=dict)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="INCOMPLETE")
+    missing_fields: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    quote_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("quote_snapshots.id", ondelete="RESTRICT"), nullable=True
+    )
+    quote_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

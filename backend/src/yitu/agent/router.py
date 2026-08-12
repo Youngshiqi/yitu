@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Header
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from yitu.agent.drafts import DraftPatch, DraftService, DraftValidationView, DraftView
 from yitu.agent.model_adapter import ModelAdapter, get_model_adapter
 from yitu.agent.models import AgentConversation, AgentMessage
 from yitu.agent.schemas import (
@@ -64,6 +65,46 @@ async def list_messages(
 ) -> list[AgentMessage]:
     """按稳定顺序恢复当前用户的会话历史。"""
     return await AgentConversationService(session).list_messages(conversation_id, user)
+
+
+@router.get("/{conversation_id}/draft", response_model=DraftView)
+async def get_draft(
+    conversation_id: UUID,
+    user: CurrentUser = _current_user,
+    session: AsyncSession = _session,
+) -> DraftView:
+    """恢复当前用户会话中的结构化运单草稿。"""
+    await AgentConversationService(session).get_owned(conversation_id, user)
+    draft = await DraftService(session).get_or_create(conversation_id, user)
+    await session.commit()
+    return DraftView.model_validate(draft)
+
+
+@router.patch("/{conversation_id}/draft", response_model=DraftView)
+async def update_draft(
+    conversation_id: UUID,
+    request: DraftPatch,
+    user: CurrentUser = _current_user,
+    session: AsyncSession = _session,
+) -> DraftView:
+    """合并结构化草稿字段，并立即失效旧报价。"""
+    await AgentConversationService(session).get_owned(conversation_id, user)
+    result = await DraftService(session).update(conversation_id, user, request)
+    await session.commit()
+    return result
+
+
+@router.post("/{conversation_id}/draft/validate", response_model=DraftValidationView)
+async def validate_draft(
+    conversation_id: UUID,
+    user: CurrentUser = _current_user,
+    session: AsyncSession = _session,
+) -> DraftValidationView:
+    """调用正式地址校验和计价服务，生成待确认数据。"""
+    await AgentConversationService(session).get_owned(conversation_id, user)
+    result = await DraftService(session).validate_and_quote(conversation_id, user)
+    await session.commit()
+    return result
 
 
 @router.post("/{conversation_id}/messages", response_model=AgentTurnView)
