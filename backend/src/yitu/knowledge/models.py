@@ -15,6 +15,7 @@ from sqlalchemy import (
     func,
     text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from yitu.knowledge.embedding import QWEN_EMBEDDING_DIMENSION
@@ -102,6 +103,11 @@ class KnowledgeChunk(Base):
     )
     embedding_model: Mapped[str] = mapped_column(String(128), nullable=False)
     embedding_dimension: Mapped[int] = mapped_column(Integer, nullable=False)
+    title: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    section_path: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    content_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    chunking_version: Mapped[str] = mapped_column(String(32), nullable=False)
+    indexed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     page_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
     page_end: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

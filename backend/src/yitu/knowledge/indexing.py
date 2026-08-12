@@ -1,5 +1,5 @@
 from datetime import UTC, datetime
-from uuid import UUID, uuid4
+from uuid import UUID, uuid5
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -7,8 +7,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from yitu.knowledge.chunking import ChunkingPolicy
 from yitu.knowledge.embedding import (
     QWEN_EMBEDDING_DIMENSION,
-    DeterministicEmbedding,
     EmbeddingProvider,
+    get_embedding_provider,
 )
 from yitu.knowledge.models import KnowledgeChunk, KnowledgeDocument
 from yitu.platform.errors import AppError
@@ -36,8 +36,9 @@ async def build_index_version(
         .limit(1)
     )
     version = (latest_version or 0) + 1
-    chunks = (policy or ChunkingPolicy()).chunk(document.parsed_text)
-    selected_provider = provider or DeterministicEmbedding()
+    chunking_policy = policy or ChunkingPolicy()
+    chunks = chunking_policy.chunk(document.parsed_text)
+    selected_provider = provider or get_embedding_provider()
     vectors = selected_provider.embed([chunk.content for chunk in chunks])
     dimension = selected_provider.dimension
     if dimension != QWEN_EMBEDDING_DIMENSION:
@@ -56,7 +57,11 @@ async def build_index_version(
     session.add_all(
         [
             KnowledgeChunk(
-                id=uuid4(),
+                # 使用文档、版本和块内容生成稳定 UUID，重建同一版本不会产生重复身份。
+                id=uuid5(
+                    document.id,
+                    f"{version}:{chunk.index}:{chunk.content}",
+                ),
                 document_id=document_id,
                 index_version=version,
                 chunk_index=chunk.index,
@@ -64,6 +69,11 @@ async def build_index_version(
                 embedding=vectors[chunk.index],
                 embedding_model=selected_provider.model,
                 embedding_dimension=dimension,
+                title=chunk.title,
+                section_path=list(chunk.section_path),
+                content_type=chunk.content_type,
+                chunking_version=chunking_policy.version,
+                indexed_at=now,
                 page_start=chunk.page_start,
                 page_end=chunk.page_end,
                 created_at=now,
