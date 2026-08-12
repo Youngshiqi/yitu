@@ -97,6 +97,8 @@ class KnowledgeChunk(Base):
     index_version: Mapped[int] = mapped_column(Integer, nullable=False)
     chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    search_tokens: Mapped[str] = mapped_column(Text, nullable=False)
+    tokenizer_version: Mapped[str] = mapped_column(String(32), nullable=False)
     embedding: Mapped[list[float]] = mapped_column(
         Vector(QWEN_EMBEDDING_DIMENSION),
         nullable=False,
@@ -122,6 +124,6 @@ Index(
 Index(
     "ix_knowledge_chunks_content_fts",
     # REGCONFIG 必须作为 SQL 字面量编译，否则建表元数据会生成不可执行的绑定参数。
-    func.to_tsvector(text("'simple'"), KnowledgeChunk.content),
+    func.to_tsvector(text("'simple'"), KnowledgeChunk.search_tokens),
     postgresql_using="gin",
 )

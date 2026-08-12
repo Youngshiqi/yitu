@@ -11,6 +11,7 @@ from yitu.knowledge.embedding import (
     get_embedding_provider,
 )
 from yitu.knowledge.models import KnowledgeChunk, KnowledgeDocument
+from yitu.knowledge.tokenization import TOKENIZER_VERSION, tokenize_for_search
 from yitu.platform.errors import AppError
 
 
@@ -66,6 +67,8 @@ async def build_index_version(
                 index_version=version,
                 chunk_index=chunk.index,
                 content=chunk.content,
+                search_tokens=tokenize_for_search(chunk.content),
+                tokenizer_version=TOKENIZER_VERSION,
                 embedding=vectors[chunk.index],
                 embedding_model=selected_provider.model,
                 embedding_dimension=dimension,

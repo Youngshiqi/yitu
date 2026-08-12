@@ -10,6 +10,9 @@ class EvidenceView(BaseModel):
     filename: str
     category: str | None
     index_version: int
+    title: str | None
+    section_path: list[str]
+    content_type: str
     page_start: int | None
     page_end: int | None
     content: str

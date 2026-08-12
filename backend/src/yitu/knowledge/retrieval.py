@@ -1,13 +1,18 @@
+from asyncio import to_thread
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from math import sqrt
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select, text, union
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yitu.knowledge.embedding import DeterministicEmbedding
+from yitu.knowledge.embedding import EmbeddingProvider, get_embedding_provider
 from yitu.knowledge.models import DocumentStatus, KnowledgeChunk, KnowledgeDocument
+from yitu.knowledge.tokenization import tokenize_for_search
+
+KEYWORD_WEIGHT = 0.55
+VECTOR_WEIGHT = 0.45
+MAX_CANDIDATES = 160
 
 
 @dataclass(frozen=True, slots=True)
@@ -16,48 +21,133 @@ class Evidence:
     filename: str
     category: str | None
     index_version: int
+    title: str | None
+    section_path: list[str]
+    content_type: str
     page_start: int | None
     page_end: int | None
     content: str
     score: float
 
 
-def _cosine(left: list[float], right: list[float]) -> float:
-    dot = sum(a * b for a, b in zip(left, right, strict=False))
-    norm_left = sqrt(sum(value * value for value in left)) or 1.0
-    norm_right = sqrt(sum(value * value for value in right)) or 1.0
-    return dot / (norm_left * norm_right)
-
-
 class KnowledgeRetriever:
-    def __init__(self, session: AsyncSession) -> None:
-        self.session = session
+    """使用 PostgreSQL 全文索引和 pgvector 返回已发布的有效证据。"""
 
-    async def search(self, query: str, *, category: str | None = None, limit: int = 5) -> list[Evidence]:
+    def __init__(
+        self,
+        session: AsyncSession,
+        provider: EmbeddingProvider | None = None,
+    ) -> None:
+        self.session = session
+        self.provider = provider
+
+    async def search(
+        self,
+        query: str,
+        *,
+        category: str | None = None,
+        limit: int = 5,
+    ) -> list[Evidence]:
+        """分别召回关键词和向量候选，再按固定权重归一化融合。"""
         normalized = query.strip()
-        if not normalized:
+        query_tokens = tokenize_for_search(normalized)
+        if not normalized or not query_tokens:
             return []
+
+        provider = self.provider or get_embedding_provider()
+        query_vectors = await to_thread(provider.embed, [normalized])
+        if len(query_vectors) != 1:
+            raise RuntimeError("Embedding provider returned an invalid query vector")
+        query_vector = query_vectors[0]
+        candidate_limit = min(max(limit * 8, 40), MAX_CANDIDATES)
         now = datetime.now(UTC)
-        statement = (
-            select(KnowledgeChunk, KnowledgeDocument)
-            .join(KnowledgeDocument, KnowledgeDocument.id == KnowledgeChunk.document_id)
+
+        latest_versions = (
+            select(
+                KnowledgeChunk.document_id.label("document_id"),
+                func.max(KnowledgeChunk.index_version).label("index_version"),
+            )
+            .group_by(KnowledgeChunk.document_id)
+            .subquery()
+        )
+        base_ids = (
+            select(KnowledgeChunk.id)
+            .join(
+                KnowledgeDocument,
+                KnowledgeDocument.id == KnowledgeChunk.document_id,
+            )
+            .join(
+                latest_versions,
+                (latest_versions.c.document_id == KnowledgeChunk.document_id)
+                & (latest_versions.c.index_version == KnowledgeChunk.index_version),
+            )
             .where(KnowledgeDocument.status == DocumentStatus.PUBLISHED)
-            .where((KnowledgeDocument.effective_from.is_(None)) | (KnowledgeDocument.effective_from <= now))
-            .where((KnowledgeDocument.effective_to.is_(None)) | (KnowledgeDocument.effective_to >= now))
+            .where(
+                (KnowledgeDocument.effective_from.is_(None))
+                | (KnowledgeDocument.effective_from <= now)
+            )
+            .where(
+                (KnowledgeDocument.effective_to.is_(None))
+                | (KnowledgeDocument.effective_to >= now)
+            )
         )
         if category:
-            statement = statement.where(KnowledgeDocument.category == category)
+            base_ids = base_ids.where(KnowledgeDocument.category == category)
+
+        vector_distance = KnowledgeChunk.embedding.cosine_distance(query_vector)
+        search_vector = func.to_tsvector(
+            text("'simple'"),
+            KnowledgeChunk.search_tokens,
+        )
+        search_query = func.plainto_tsquery(text("'simple'"), query_tokens)
+        keyword_rank = func.ts_rank_cd(search_vector, search_query)
+
+        vector_candidates = base_ids.order_by(vector_distance).limit(candidate_limit)
+        keyword_candidates = (
+            base_ids.where(search_vector.op("@@")(search_query))
+            .order_by(keyword_rank.desc())
+            .limit(candidate_limit)
+        )
+        candidate_ids = union(vector_candidates, keyword_candidates).subquery()
+
+        # cosine distance 范围为 0..2；全文 rank 用 rank/(rank+1) 压缩到 0..1。
+        vector_score = func.greatest(
+            0.0,
+            func.least(1.0, 1.0 - (vector_distance / 2.0)),
+        )
+        keyword_score = keyword_rank / (keyword_rank + 1.0)
+        fused_score = (
+            (KEYWORD_WEIGHT * keyword_score) + (VECTOR_WEIGHT * vector_score)
+        ).label("score")
+        statement = (
+            select(KnowledgeChunk, KnowledgeDocument, fused_score)
+            .join(candidate_ids, candidate_ids.c.id == KnowledgeChunk.id)
+            .join(
+                KnowledgeDocument,
+                KnowledgeDocument.id == KnowledgeChunk.document_id,
+            )
+            .order_by(
+                fused_score.desc(),
+                KnowledgeChunk.document_id,
+                KnowledgeChunk.index_version.desc(),
+                KnowledgeChunk.chunk_index,
+            )
+            .limit(max(1, min(limit, 20)))
+        )
         rows = (await self.session.execute(statement)).all()
-        query_vector = DeterministicEmbedding().embed([normalized])[0]
-        terms = set(normalized.lower().split())
-        scored: list[Evidence] = []
-        for chunk, document in rows:
-            keyword_hits = sum(term in chunk.content.lower() for term in terms)
-            keyword_score = keyword_hits / max(len(terms), 1)
-            vector_score = (_cosine(query_vector, chunk.embedding) + 1.0) / 2.0
-            score = (0.55 * keyword_score) + (0.45 * vector_score)
-            if score <= 0:
-                continue
-            scored.append(Evidence(document.id, document.filename, document.category, chunk.index_version, chunk.page_start, chunk.page_end, chunk.content, round(score, 6)))
-        scored.sort(key=lambda item: (-item.score, str(item.document_id), item.index_version))
-        return scored[: max(1, min(limit, 20))]
+        return [
+            Evidence(
+                document_id=document.id,
+                filename=document.filename,
+                category=document.category,
+                index_version=chunk.index_version,
+                title=chunk.title,
+                section_path=chunk.section_path,
+                content_type=chunk.content_type,
+                page_start=chunk.page_start,
+                page_end=chunk.page_end,
+                content=chunk.content,
+                score=round(float(score), 6),
+            )
+            for chunk, document, score in rows
+        ]
