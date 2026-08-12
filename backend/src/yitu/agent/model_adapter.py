@@ -129,9 +129,11 @@ class OpenAICompatibleModelAdapter:
 def get_model_adapter() -> ModelAdapter:
     """根据配置选择固定模型或 OpenAI 兼容生产模型。"""
     settings = get_settings()
-    if settings.agent_model_provider == "fixed":
+    provider = settings.agent_model_provider.strip().lower()
+    if provider == "fixed":
         return FixedModelAdapter()
-    if settings.agent_model_provider != "openai-compatible":
+    # DeepSeek 使用 OpenAI-compatible 协议，允许配置文件使用供应商名称。
+    if provider not in {"openai-compatible", "deepseek"}:
         raise ModelUnavailableError("Agent model provider is unsupported")
     if not settings.agent_model_base_url or not settings.agent_model_api_key:
         raise ModelUnavailableError("Agent model configuration is incomplete")

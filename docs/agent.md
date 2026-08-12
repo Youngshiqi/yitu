@@ -21,3 +21,7 @@ PYTHONPATH=src uv run python evals/run.py
 ```
 
 在线模型冒烟测试尚未执行。启用前必须先配置模型供应商、API Key 和预算，并只运行有界请求。
+
+## 在线验收记录
+
+2026-08-12 使用 DeepSeek OpenAI-compatible 接口完成有界冒烟：普通对话返回模型回复并生成 `trace_id`；“确认下单”进入 `confirmation` 且要求显式确认；“禁寄规则”进入 `knowledge`。未执行授权消费和正式运单创建。
