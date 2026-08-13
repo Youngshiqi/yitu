@@ -1,9 +1,11 @@
 import enum
+from datetime import datetime
 from uuid import UUID, uuid4
 
-from sqlalchemy import ForeignKey, String, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from yitu.platform.clock import Clock
 from yitu.platform.models import Base
 
 
@@ -26,6 +28,13 @@ class Station(Base):
     code: Mapped[str] = mapped_column(String(32), unique=True, nullable=False)
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     district_code: Mapped[str] = mapped_column(String(12), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=Clock.now
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=Clock.now, onupdate=Clock.now
+    )
 
     users: Mapped[list["User"]] = relationship(back_populates="station")
 

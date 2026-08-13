@@ -14,6 +14,7 @@ RUN uv sync --frozen --no-dev
 
 COPY alembic.ini ./
 COPY migrations ./migrations
+COPY data ./data
 COPY src ./src
 
 RUN addgroup --system yitu && \

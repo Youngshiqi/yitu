@@ -2,7 +2,7 @@
 
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
-from typing import Protocol, cast
+from typing import Any, Protocol, TypeVar, cast
 
 from openai import (
     APIConnectionError,
@@ -13,8 +13,11 @@ from openai import (
     RateLimitError,
 )
 from openai.types.chat import ChatCompletionMessageParam
+from pydantic import BaseModel, ValidationError
 
 from yitu.platform.config import get_settings
+
+StructuredT = TypeVar("StructuredT", bound=BaseModel)
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,6 +32,12 @@ class ModelAdapter(Protocol):
     """隔离具体云模型 SDK，便于固定模型和生产模型互换。"""
 
     async def complete(self, messages: Sequence[ModelMessage]) -> str: ...
+
+    async def complete_structured(
+        self,
+        messages: Sequence[ModelMessage],
+        response_model: type[StructuredT],
+    ) -> StructuredT: ...
 
     def stream(self, messages: Sequence[ModelMessage]) -> AsyncIterator[str]: ...
 
@@ -46,6 +55,21 @@ class FixedModelAdapter:
             "",
         )
         return f"已收到你的消息：{last_user}"
+
+    async def complete_structured(
+        self,
+        messages: Sequence[ModelMessage],
+        response_model: type[StructuredT],
+    ) -> StructuredT:
+        """固定适配器不猜测业务意图，只返回低置信度普通对话结果。"""
+        return response_model.model_validate(
+            {
+                "intents": ["GENERAL_CHAT"],
+                "primary_intent": "GENERAL_CHAT",
+                "confidence": 0.0,
+                "draft": {},
+            }
+        )
 
     async def stream(self, messages: Sequence[ModelMessage]) -> AsyncIterator[str]:
         yield await self.complete(messages)
@@ -91,6 +115,104 @@ class OpenAICompatibleModelAdapter:
         if not content:
             raise ModelUnavailableError("Agent model returned an empty response")
         return content
+
+    async def complete_structured(
+        self,
+        messages: Sequence[ModelMessage],
+        response_model: type[StructuredT],
+    ) -> StructuredT:
+        """优先使用 Function Calling；供应商不兼容时降级为 JSON Mode。"""
+        function_name = "classify_logistics_intent"
+        tools = cast(
+            Any,
+            [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": function_name,
+                        "description": "返回物流意图、槽位和置信度",
+                        "parameters": response_model.model_json_schema(),
+                    },
+                }
+            ],
+        )
+        try:
+            for _attempt in range(2):
+                response = await self._client.chat.completions.create(
+                    model=self._model,
+                    messages=self._request_messages(messages),
+                    tools=tools,
+                    tool_choice=cast(
+                        Any,
+                        {"type": "function", "function": {"name": function_name}},
+                    ),
+                )
+                if not response.choices:
+                    continue
+                message = response.choices[0].message
+                arguments = message.content
+                if message.tool_calls:
+                    first_call = message.tool_calls[0]
+                    if first_call.type == "function":
+                        arguments = first_call.function.arguments
+                # 少数 OpenAI-compatible 服务忽略 tool_choice 而返回 JSON 文本，保留兼容降级。
+                if not arguments:
+                    continue
+                try:
+                    return response_model.model_validate_json(arguments)
+                except ValidationError:
+                    continue
+        except APIStatusError:
+            # 部分 OpenAI-compatible 模型不支持 tools/tool_choice，改用 JSON Mode。
+            pass
+        except (
+            APIConnectionError,
+            RateLimitError,
+            InternalServerError,
+            OpenAIError,
+        ):
+            raise ModelUnavailableError("Agent model is unavailable") from None
+        return await self._complete_json_mode(messages, response_model)
+
+    async def _complete_json_mode(
+        self,
+        messages: Sequence[ModelMessage],
+        response_model: type[StructuredT],
+    ) -> StructuredT:
+        """Function Calling 不可用时，以 JSON Mode 保持相同输出契约。"""
+        schema_instruction = ModelMessage(
+            role="system",
+            content=(
+                "只输出一个 JSON 对象，必须符合以下 JSON Schema："
+                + response_model.model_json_schema().__str__()
+            ),
+        )
+        request_messages = [*messages, schema_instruction]
+        try:
+            for _attempt in range(2):
+                response = await self._client.chat.completions.create(
+                    model=self._model,
+                    messages=self._request_messages(request_messages),
+                    response_format={"type": "json_object"},
+                )
+                content = (
+                    response.choices[0].message.content if response.choices else None
+                )
+                if not content:
+                    continue
+                try:
+                    return response_model.model_validate_json(content)
+                except ValidationError:
+                    continue
+        except (
+            APIConnectionError,
+            RateLimitError,
+            InternalServerError,
+            APIStatusError,
+            OpenAIError,
+        ):
+            raise ModelUnavailableError("Agent model is unavailable") from None
+        raise ModelUnavailableError("Agent model returned invalid structured output")
 
     async def stream(self, messages: Sequence[ModelMessage]) -> AsyncIterator[str]:
         """按上游增量返回文本；调用方负责持久化最终消息。"""

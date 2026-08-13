@@ -5,23 +5,25 @@ from time import monotonic
 import pytest
 
 from yitu.agent.graph import build_agent_graph
-from yitu.agent.state import AgentState
+from yitu.agent.state import AgentIntent, AgentState
 
 
 @pytest.mark.parametrize(
-    ("message", "route", "next_action"),
+    ("message", "intent", "route", "next_action"),
     [
-        ("禁寄物品有哪些规定", "knowledge", "SEARCH_PUBLISHED_KNOWLEDGE"),
-        ("查询我的运单到哪了", "read_tool", "QUERY_OWN_SHIPMENT"),
-        ("把收件地址改成上海", "draft", "UPDATE_SHIPMENT_DRAFT"),
-        ("确认下单并支付", "confirmation", "REQUEST_EXPLICIT_CONFIRMATION"),
-        ("你好", "respond", "GENERATE_RESPONSE"),
+        ("这台电脑该怎么包才稳妥", "KNOWLEDGE_QUERY", "knowledge", "SEARCH_PUBLISHED_KNOWLEDGE"),
+        ("我的那个包裹走到哪一步了", "SHIPMENT_QUERY", "read_tool", "QUERY_OWN_SHIPMENT"),
+        ("从公司寄到家，重两公斤", "DRAFT_UPDATE", "draft", "UPDATE_SHIPMENT_DRAFT"),
+        ("就按这个方案下单", "SENSITIVE_ACTION", "confirmation", "REQUEST_EXPLICIT_CONFIRMATION"),
+        ("你好", "GENERAL_CHAT", "respond", "GENERATE_RESPONSE"),
     ],
 )
 def test_graph_routes_supported_intents(
-    message: str, route: str, next_action: str
+    message: str, intent: AgentIntent, route: str, next_action: str
 ) -> None:
-    result = build_agent_graph().invoke(base_state(message))
+    state = base_state(message)
+    state["semantic_intent"] = intent
+    result = build_agent_graph().invoke(state)
     assert result["route"] == route
     assert result["next_action"] == next_action
 

@@ -1,5 +1,6 @@
 """Agent 会话、记忆、草稿、授权和 SSE API。"""
 
+from collections.abc import AsyncIterator
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, Request
@@ -19,7 +20,11 @@ from yitu.agent.schemas import (
     MessageView,
 )
 from yitu.agent.service import AgentConversationService
-from yitu.agent.sse import agent_message_events, validate_agent_cursor
+from yitu.agent.sse import (
+    agent_message_events,
+    encode_agent_event,
+    validate_agent_cursor,
+)
 from yitu.agent.write_tools import AgentWriteService
 from yitu.identity.service import CurrentUser, get_current_user
 from yitu.platform.database import get_session
@@ -128,6 +133,34 @@ async def issue_grant(conversation_id: UUID, user: CurrentUser = _current_user, 
 @router.post("/{conversation_id}/messages", response_model=AgentTurnView)
 async def send_message(conversation_id: UUID, request: MessageCreate, user: CurrentUser = _current_user, session: AsyncSession = _session, model: ModelAdapter = _model) -> AgentTurnView:
     return await AgentConversationService(session).send_message(conversation_id, user, request.content, model)
+
+
+@router.post("/{conversation_id}/messages/stream")
+async def stream_message(
+    conversation_id: UUID,
+    request: MessageCreate,
+    user: CurrentUser = _current_user,
+    session: AsyncSession = _session,
+    model: ModelAdapter = _model,
+) -> StreamingResponse:
+    """通过单个鉴权请求实时返回用户消息确认和助手增量文本。"""
+    service = AgentConversationService(session)
+    await service.get_owned(conversation_id, user)
+
+    async def events() -> AsyncIterator[str]:
+        async for event, payload in service.stream_message(
+            conversation_id, user, request.content, model
+        ):
+            yield encode_agent_event(event, payload)
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get("/{conversation_id}/stream")

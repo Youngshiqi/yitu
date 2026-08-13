@@ -12,6 +12,11 @@ from yitu.agent.schemas import MessageView
 from yitu.platform.errors import AppError
 
 
+def encode_agent_event(event: str, payload: dict[str, object]) -> str:
+    """把流式 Agent 事件编码为标准 SSE 帧。"""
+    return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
 async def agent_message_events(
     session: AsyncSession,
     conversation_id: UUID,

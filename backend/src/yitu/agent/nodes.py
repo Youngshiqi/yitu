@@ -24,51 +24,15 @@ CROSS_USER_PATTERNS = (
     re.compile(r"(其他|别人|别人的|任意|全部)(客户|用户)?.{0,8}运单"),
     re.compile(r"查询.{0,8}(其他|别人|任意)(客户|用户)"),
 )
-SENSITIVE_ACTION_WORDS = (
-    "创建运单",
-    "确认下单",
-    "支付",
-    "退款",
-    "取消运单",
-    "重新派送",
-    "再次派送",
-    "创建异常工单",
-    "处理异常",
-)
-DRAFT_WORDS = (
-    "寄件",
-    "收件",
-    "地址",
-    "重量",
-    "尺寸",
-    "物品",
-    "服务方式",
-    "修改草稿",
-    "更新草稿",
-    "报价",
-)
-KNOWLEDGE_WORDS = (
-    "规则",
-    "规定",
-    "禁寄",
-    "限寄",
-    "包装",
-    "赔付",
-    "保价",
-    "时效政策",
-    "为什么",
-)
-SHIPMENT_QUERY_WORDS = (
-    "我的运单",
-    "我的快递",
-    "查件",
-    "物流轨迹",
-    "到哪了",
-    "预计到达",
-    "运单费用",
-)
 
 
+def security_refusal(message: str) -> tuple[AgentIntent, str] | None:
+    """只处理安全边界，不参与物流业务意图识别。"""
+    if any(pattern.search(message) for pattern in INJECTION_PATTERNS):
+        return "GENERAL_CHAT", INJECTION_REFUSAL
+    if any(pattern.search(message) for pattern in CROSS_USER_PATTERNS):
+        return "SHIPMENT_QUERY", CROSS_USER_REFUSAL
+    return None
 def load_context_node(state: AgentState) -> AgentState:
     """校验执行预算并标记身份、历史和工作上下文已加载。"""
     refusal = _budget_refusal(state)
@@ -82,28 +46,25 @@ def load_context_node(state: AgentState) -> AgentState:
 
 
 def classify_intent_node(state: AgentState) -> AgentState:
-    """使用确定性规则识别意图和风险，模型不能覆盖安全分类。"""
+    """先执行确定性安全拦截，再把已校验的语义结果映射为有限路由。"""
     if state.get("route") == "blocked":
         return {}
     message = state.get("user_message", "").strip()
-    if any(pattern.search(message) for pattern in INJECTION_PATTERNS):
-        return _classification("GENERAL_CHAT", "BLOCKED", "blocked", INJECTION_REFUSAL)
-    if any(pattern.search(message) for pattern in CROSS_USER_PATTERNS):
-        return _classification(
-            "SHIPMENT_QUERY",
-            "BLOCKED",
-            "blocked",
-            CROSS_USER_REFUSAL,
-        )
-    if any(word in message for word in SENSITIVE_ACTION_WORDS):
+    refusal = security_refusal(message)
+    if refusal is not None:
+        return _classification(refusal[0], "BLOCKED", "blocked", refusal[1])
+    intent = state.get("semantic_intent", "GENERAL_CHAT")
+    if state.get("requires_confirmation") or intent == "SENSITIVE_ACTION":
         return _classification("SENSITIVE_ACTION", "WRITE_ACTION", "confirmation")
-    if any(word in message for word in SHIPMENT_QUERY_WORDS):
-        return _classification("SHIPMENT_QUERY", "PERSONAL_DATA", "read_tool")
-    if any(word in message for word in KNOWLEDGE_WORDS):
-        return _classification("KNOWLEDGE_QUERY", "LOW", "knowledge")
-    if any(word in message for word in DRAFT_WORDS):
-        return _classification("DRAFT_UPDATE", "WRITE_ACTION", "draft")
-    return _classification("GENERAL_CHAT", "LOW", "respond")
+    routes: dict[AgentIntent, tuple[AgentRisk, AgentRoute]] = {
+        "GENERAL_CHAT": ("LOW", "respond"),
+        "KNOWLEDGE_QUERY": ("LOW", "knowledge"),
+        "SHIPMENT_QUERY": ("PERSONAL_DATA", "read_tool"),
+        "DRAFT_UPDATE": ("WRITE_ACTION", "draft"),
+        "SENSITIVE_ACTION": ("WRITE_ACTION", "confirmation"),
+    }
+    risk, route = routes.get(intent, ("BLOCKED", "blocked"))
+    return _classification(intent, risk, route)
 
 
 def knowledge_node(state: AgentState) -> AgentState:
@@ -114,7 +75,7 @@ def knowledge_node(state: AgentState) -> AgentState:
     return {
         "next_action": "SEARCH_PUBLISHED_KNOWLEDGE",
         "tool_call_count": state.get("tool_call_count", 0) + 1,
-        "response": "正在检索已发布的物流知识证据。",
+        "response": "好的，我来帮你查找已发布的物流规则。",
     }
 
 
@@ -126,7 +87,7 @@ def read_tool_node(state: AgentState) -> AgentState:
     return {
         "next_action": "QUERY_OWN_SHIPMENT",
         "tool_call_count": state.get("tool_call_count", 0) + 1,
-        "response": "正在查询当前登录用户有权访问的运单信息。",
+        "response": "好的，我来帮你查询当前账号下的运单信息。",
     }
 
 
@@ -138,7 +99,7 @@ def draft_node(state: AgentState) -> AgentState:
     return {
         "next_action": "UPDATE_SHIPMENT_DRAFT",
         "tool_call_count": state.get("tool_call_count", 0) + 1,
-        "response": "正在整理运单草稿字段，业务校验将在后端完成。",
+        "response": "好的，我来帮你整理寄件信息。接下来会由系统完成业务校验。",
     }
 
 
@@ -146,7 +107,7 @@ def confirmation_node(state: AgentState) -> AgentState:
     """敏感动作只能停在确认边界，当前节点绝不直接执行写操作。"""
     return {
         "next_action": "REQUEST_EXPLICIT_CONFIRMATION",
-        "response": "该操作需要展示结构化确认内容，并由你明确确认后才能执行。",
+        "response": "没问题。这个操作需要你查看确认内容并明确同意后，我才能继续执行。",
     }
 
 

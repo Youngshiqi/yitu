@@ -101,6 +101,9 @@ class DraftService:
         draft = await self.get_or_create(conversation_id, actor)
         payload = dict(draft.payload)
         payload.update(patch.model_dump(mode="json", exclude_none=True))
+        # 平台当前只开放门到门寄件，模型未提供方式时直接使用唯一可用组合。
+        payload.setdefault("pickup_method", PickupMethod.DOOR_PICKUP.value)
+        payload.setdefault("delivery_method", DeliveryMethod.HOME_DELIVERY.value)
         missing = self.missing_fields(payload)
         draft.payload = payload
         draft.missing_fields = missing
@@ -118,7 +121,25 @@ class DraftService:
         actor: CurrentUser,
     ) -> CreateShipmentCommand:
         draft = await self.get_or_create(conversation_id, actor)
-        missing = self.missing_fields(draft.payload)
+        payload = dict(draft.payload)
+        # 兼容功能调整前创建但尚未填写寄送方式的会话草稿。
+        payload.setdefault("pickup_method", PickupMethod.DOOR_PICKUP.value)
+        payload.setdefault("delivery_method", DeliveryMethod.HOME_DELIVERY.value)
+        pickup = payload.get("pickup_method")
+        delivery = payload.get("delivery_method")
+        if pickup == PickupMethod.STATION_DROPOFF.value:
+            raise AppError(
+                "STATION_DROPOFF_DISABLED",
+                "暂不支持网点寄件，请使用上门取件",
+                422,
+            )
+        if delivery == DeliveryMethod.STATION_PICKUP.value:
+            raise AppError(
+                "STATION_PICKUP_DISABLED",
+                "暂不支持网点自提，请使用送货上门",
+                422,
+            )
+        missing = self.missing_fields(payload)
         if missing:
             raise AppError(
                 "SHIPMENT_DRAFT_INCOMPLETE",
@@ -126,8 +147,9 @@ class DraftService:
                 409,
                 details={"missing_fields": missing},
             )
-        sender_id = _uuid_value(draft.payload, "sender_address_id")
-        receiver_id = _uuid_value(draft.payload, "receiver_address_id")
+        draft.payload = payload
+        sender_id = _uuid_value(payload, "sender_address_id")
+        receiver_id = _uuid_value(payload, "receiver_address_id")
         if sender_id is not None:
             await get_owned_address(self._session, sender_id, actor)
         if receiver_id is not None:
@@ -135,7 +157,7 @@ class DraftService:
         try:
             shipment_draft = ShipmentDraft.model_validate(
                 {
-                    key: draft.payload[key]
+                    key: payload[key]
                     for key in (
                         "sender_address_id",
                         "receiver_address_id",
@@ -144,7 +166,7 @@ class DraftService:
                         "pickup_method",
                         "delivery_method",
                     )
-                    if key in draft.payload
+                    if key in payload
                 }
             )
         except ValueError as error:

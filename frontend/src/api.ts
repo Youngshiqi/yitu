@@ -7,15 +7,30 @@ http.interceptors.request.use((config) => {
   return config
 })
 http.interceptors.response.use((response) => response, (error) => {
-  if (error.response?.status === 401) localStorage.removeItem('yitu_token')
+  if (error.response?.status === 401 && !error.config?.url?.includes('/auth/demo-login')) {
+    localStorage.removeItem('yitu_token')
+    window.dispatchEvent(new Event('yitu-auth-expired'))
+  }
   return Promise.reject(error)
 })
 
 export type Shipment = { id: string; shipment_no: string; owner_id: string; status: string }
-export type Address = { id: string; label?: string; recipient_name: string; phone: string; district_code: string; detail: string }
+export type ShipmentDraftInput = { sender_address_id?: string; receiver_address_id?: string; origin_station_id?: string; destination_station_id?: string; pickup_method: string; delivery_method: string }
+export type Region = { id: string; name: string; level: 'PROVINCE' | 'CITY' | 'DISTRICT' }
+export type ServiceType = 'HOME_PICKUP' | 'STATION_DROP_OFF' | 'HOME_DELIVERY' | 'STATION_PICKUP'
+export type StationServiceArea = { province_region_id: string; city_region_id: string; district_region_id: string; district_code: string; district_name: string; province_name: string; city_name: string; service_types: ServiceType[] }
+export type AdminStation = { id: string; code: string; name: string; district_code: string; province_region_id: string; city_region_id: string; district_region_id: string; province_name: string; city_name: string; district_name: string; enabled: boolean; created_at: string; updated_at: string; service_areas: StationServiceArea[] }
+export type StationInput = { code: string; name: string; district_region_id: string; service_areas: Array<{ district_region_id: string; service_types: ServiceType[] }> }
+export type Address = { id: string; label?: string; recipient_name: string; phone: string; province_region_id: string; province_name: string; city_region_id: string; city_name: string; district_region_id: string; district_name: string; detail: string; full_address: string }
+export type AddressInput = { label?: string; recipient_name: string; phone: string; province_region_id: string; city_region_id: string; district_region_id: string; detail: string }
 export type Notification = { id: string; title: string; content: string; status: string; created_at: string; read_at?: string }
 export type AgentConversation = { id: string; title?: string; status: string; created_at: string; updated_at: string }
 export type AgentMessage = { id: string; conversation_id: string; role: 'user' | 'assistant' | 'tool' | 'system'; content: string; envelope?: Record<string, unknown>; created_at: string }
+export type AgentStreamEvent =
+  | { event: 'user_message'; data: AgentMessage }
+  | { event: 'delta'; data: { content: string } }
+  | { event: 'done'; data: AgentMessage }
+  | { event: 'error'; data: { code: string; message: string } }
 export type CourierTask = { id: string; shipment_id: string; task_type: 'PICKUP' | 'DELIVERY'; status: 'AVAILABLE' | 'ACCEPTED' | 'COMPLETED' | 'CANCELLED'; assignee_id?: string }
 export type Quote = { id: string; total_cents: number; currency: string; line_items: Array<{ name: string; amount_cents: number }>; rule_version: string; created_at: string }
 export type ExceptionCase = { id: string; shipment_id: string; case_type: string; severity: string; status: string; description: string; blocks_fulfillment: boolean; assigned_to?: string; opened_at: string }
@@ -34,18 +49,26 @@ export async function me() { return (await http.get('/auth/me')).data }
 export async function listShipments(params?: Record<string, unknown>) { return (await http.get('/shipments', { params })).data }
 export async function getShipment(id: string) { return (await http.get(`/shipments/${id}`)).data }
 export async function tracking(id: string) { return (await http.get(`/shipments/${id}/tracking`)).data }
-export async function createShipment(payload: unknown) { return (await http.post('/shipments', payload, { headers: { 'Idempotency-Key': crypto.randomUUID() } })).data }
+export async function createShipment(payload: { draft: ShipmentDraftInput; status: string }) { return (await http.post('/shipments', payload, { headers: { 'Idempotency-Key': crypto.randomUUID() } })).data }
 export async function getLabel(id: string) { return (await http.get(`/shipments/${id}/label`)).data }
 export async function resumeShipment(id: string, reason: string) { return (await http.post(`/shipments/${id}/resume`, { reason }, { headers: { 'Idempotency-Key': crypto.randomUUID() } })).data }
 
 // ---- 地址 ----
 export async function listAddresses() { return (await http.get('/addresses')).data as Address[] }
-export async function createAddress(payload: Omit<Address, 'id'>) { return (await http.post('/addresses', payload)).data }
-export async function updateAddress(id: string, payload: Partial<Omit<Address, 'id'>>) { return (await http.patch(`/addresses/${id}`, payload)).data }
+export async function createAddress(payload: AddressInput) { return (await http.post('/addresses', payload)).data as Address }
+export async function updateAddress(id: string, payload: Partial<AddressInput>) { return (await http.patch(`/addresses/${id}`, payload)).data as Address }
 export async function deleteAddress(id: string) { await http.delete(`/addresses/${id}`) }
+
+// ---- 行政区划 ----
+export async function listRegions(params: { level?: 'PROVINCE'; parent_id?: string }) { return (await http.get('/regions', { params })).data as { items: Region[] } }
 
 // ---- 网点 ----
 export async function listStations(params?: Record<string, unknown>) { return (await http.get('/stations', { params })).data }
+export async function listAdminStations(params?: Record<string, unknown>) { return (await http.get('/admin/stations', { params })).data as { items: AdminStation[]; total: number } }
+export async function createAdminStation(payload: StationInput) { return (await http.post('/admin/stations', payload)).data as AdminStation }
+export async function updateAdminStation(id: string, payload: StationInput) { return (await http.patch(`/admin/stations/${id}`, payload)).data as AdminStation }
+export async function setAdminStationEnabled(id: string, enabled: boolean) { return (await http.post(`/admin/stations/${id}/${enabled ? 'enable' : 'disable'}`)).data as AdminStation }
+export async function deleteAdminStation(id: string) { await http.delete(`/admin/stations/${id}`) }
 
 // ---- 报价与支付 ----
 export async function createQuote(payload: {
@@ -66,8 +89,43 @@ export function notificationStreamUrl(cursor?: string): string { const base = '/
 // ---- AI Agent ----
 export async function createConversation(title?: string) { return (await http.post('/agent/conversations', { title })).data as AgentConversation }
 export async function listConversations() { return (await http.get('/agent/conversations')).data as AgentConversation[] }
+export async function deleteConversation(id: string) { await http.delete(`/agent/conversations/${id}`) }
 export async function listMessages(id: string) { return (await http.get(`/agent/conversations/${id}/messages`)).data as AgentMessage[] }
 export async function sendAgentMessage(id: string, content: string) { return (await http.post(`/agent/conversations/${id}/messages`, { content })).data }
+export async function* streamAgentMessage(id: string, content: string): AsyncGenerator<AgentStreamEvent> {
+  const token = localStorage.getItem('yitu_token')
+  const response = await fetch(`/api/v1/agent/conversations/${id}/messages/stream`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ content }),
+  })
+  if (response.status === 401) {
+    localStorage.removeItem('yitu_token')
+    window.dispatchEvent(new Event('yitu-auth-expired'))
+  }
+  if (!response.ok || !response.body) throw new Error(`Agent stream failed: ${response.status}`)
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  while (true) {
+    const { value, done } = await reader.read()
+    buffer += decoder.decode(value, { stream: !done }).replace(/\r\n/g, '\n')
+    let boundary = buffer.indexOf('\n\n')
+    while (boundary >= 0) {
+      const frame = buffer.slice(0, boundary)
+      buffer = buffer.slice(boundary + 2)
+      const event = frame.split('\n').find(line => line.startsWith('event:'))?.slice(6).trim()
+      const data = frame.split('\n').filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart()).join('\n')
+      if (event && data) yield { event, data: JSON.parse(data) } as AgentStreamEvent
+      boundary = buffer.indexOf('\n\n')
+    }
+    if (done) break
+  }
+}
 export async function getAgentDraft(id: string) { return (await http.get(`/agent/conversations/${id}/draft`)).data }
 export async function validateAgentDraft(id: string) { return (await http.post(`/agent/conversations/${id}/draft/validate`)).data }
 export async function issueAgentGrant(id: string) { return (await http.post(`/agent/conversations/${id}/grant`)).data }

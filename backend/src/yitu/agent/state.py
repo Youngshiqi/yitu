@@ -28,6 +28,14 @@ class AgentState(TypedDict, total=False):
     user_role: str
     user_message: str
     history: list[dict[str, str]]
+    semantic_intents: list[AgentIntent]
+    semantic_intent: AgentIntent
+    semantic_confidence: float
+    semantic_shipment_no: str | None
+    semantic_knowledge_query: str | None
+    semantic_draft: dict[str, object]
+    requires_confirmation: bool
+    clarification_question: str | None
     intent: AgentIntent
     risk: AgentRisk
     route: AgentRoute

@@ -17,6 +17,7 @@ async def match_station(
             .where(
                 ServiceArea.district_code == district_code,
                 ServiceArea.service_type == service_type,
+                Station.enabled.is_(True),
             )
         )
     ).scalar_one_or_none()

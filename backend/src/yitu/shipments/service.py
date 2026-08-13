@@ -17,7 +17,7 @@ from yitu.platform.idempotency import (
     canonical_json_sha256,
 )
 from yitu.platform.outbox import OutboxService
-from yitu.shipments.enums import ShipmentStatus
+from yitu.shipments.enums import DeliveryMethod, PickupMethod, ShipmentStatus
 from yitu.shipments.models import Shipment
 from yitu.shipments.schemas import CreateShipmentCommand
 from yitu.shipments.state_machine import transition
@@ -103,6 +103,19 @@ class ShipmentApplicationService:
     async def create(
         self, command: CreateShipmentCommand, actor: CurrentUser, idempotency_key: str
     ) -> ShipmentView:
+        # 当前网点自动匹配能力尚未覆盖客户自寄、自提场景，新运单只开放门到门服务。
+        if command.draft.pickup_method is not PickupMethod.DOOR_PICKUP:
+            raise AppError(
+                "STATION_DROPOFF_DISABLED",
+                "暂不支持网点寄件，请选择上门取件",
+                422,
+            )
+        if command.draft.delivery_method is not DeliveryMethod.HOME_DELIVERY:
+            raise AppError(
+                "STATION_PICKUP_DISABLED",
+                "暂不支持网点自提，请选择送货上门",
+                422,
+            )
         payload = command.model_dump(mode="json")
         request_hash = canonical_json_sha256(payload)
         scope = f"shipment:create:{actor.id}"
@@ -132,7 +145,7 @@ class ShipmentApplicationService:
             if draft.pickup_method.value == "DOOR_PICKUP" and sender is not None:
                 origin_station_id = (await match_station(self._session, sender.district_code, "HOME_PICKUP")).id
             if draft.delivery_method.value == "HOME_DELIVERY" and receiver is not None:
-                destination_station_id = (await match_station(self._session, receiver.district_code, "HOME_PICKUP")).id
+                destination_station_id = (await match_station(self._session, receiver.district_code, "HOME_DELIVERY")).id
             shipment = Shipment(
                 shipment_no=f"YT{uuid4().hex[:16].upper()}",
                 owner_id=actor.id,

@@ -86,6 +86,16 @@ GET /readiness
 
 ### 地址簿
 
+先按需查询省、市、区县。区域查询接口无需登录：
+
+```http
+GET /regions?level=PROVINCE
+GET /regions?parent_id={province_region_id}
+GET /regions?parent_id={city_region_id}
+```
+
+每项返回 `id`、`name`、`level`。客户端只能提交接口返回的区域 ID，不能让用户填写行政区划代码。
+
 ```http
 GET    /addresses
 POST   /addresses
@@ -100,12 +110,14 @@ DELETE /addresses/{address_id}
   "label":"家",
   "recipient_name":"张三",
   "phone":"13800000000",
-  "district_code":"110101",
-  "detail":"东城区示例路 1 号"
+  "province_region_id":"省级区域 UUID",
+  "city_region_id":"市级区域 UUID",
+  "district_region_id":"区县级区域 UUID",
+  "detail":"示例路 1 号"
 }
 ```
 
-更新请求可只提交需要修改的字段。响应字段：`id`、`label`、`recipient_name`、`phone`、`district_code`、`detail`。创建返回 `201`，删除返回 `204`。
+后端校验省、市、区县父子关系，并根据区县节点生成 `district_code` 供网点匹配。响应包含三个区域 ID、对应名称、`detail` 和后端拼接的 `full_address`。更新请求可只提交需要修改的字段；变更行政区域时仍会重新校验完整区域链。创建返回 `201`，删除返回 `204`。
 
 ### 网点列表
 
