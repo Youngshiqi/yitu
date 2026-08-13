@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yitu.dispatch.models import CourierTask
+from yitu.dispatch.models import CourierTask, CourierTaskStatus, CourierTaskType
 from yitu.dispatch.service import DispatchService
 from yitu.identity.models import Role
 from yitu.identity.service import CurrentUser, get_current_user
@@ -13,7 +13,9 @@ from yitu.platform.database import get_session
 from yitu.platform.errors import AppError
 from yitu.shipments.credentials import LastMileService
 from yitu.shipments.linehaul import LinehaulResult, LinehaulService
-from yitu.shipments.service import ShipmentView
+from yitu.shipments.models import Shipment
+from yitu.shipments.schemas import ReweighCommand
+from yitu.shipments.service import ShipmentApplicationService, ShipmentView
 
 router = APIRouter(prefix="/api/v1/dispatch", tags=["dispatch"])
 _session = Depends(get_session)
@@ -40,6 +42,30 @@ async def accept_task(task_id: UUID, user: CurrentUser = _current_user, session:
 
 @router.post("/tasks/{task_id}/confirm-pickup")
 async def confirm_pickup(task_id: UUID, user: CurrentUser = _current_user, session: AsyncSession = _session) -> None:
+    await DispatchService(session).confirm_pickup(task_id, user, f"pickup:{task_id}")
+    await session.commit()
+
+
+@router.post("/tasks/{task_id}/confirm-pickup-with-reweigh")
+async def confirm_pickup_with_reweigh(
+    task_id: UUID,
+    payload: ReweighCommand,
+    user: CurrentUser = _current_user,
+    session: AsyncSession = _session,
+) -> None:
+    """揽收确认与复重必须在同一事务完成，避免遗漏计费事实。"""
+    task = await session.get(CourierTask, task_id)
+    if task is None:
+        raise AppError("TASK_NOT_FOUND", "任务不存在", 404)
+    if task.task_type is not CourierTaskType.PICKUP:
+        raise AppError("TASK_TYPE_INVALID", "只有揽收任务可以复重", 409)
+    if user.role is not Role.COURIER or task.assignee_id != user.id or task.status is not CourierTaskStatus.ACCEPTED:
+        raise AppError("FORBIDDEN_TASK_OWNER", "只有已接单的任务负责人可以复重", 403)
+    await ShipmentApplicationService(session).reweigh(task.shipment_id, payload, user)
+    shipment = await session.get(Shipment, task.shipment_id)
+    if shipment is not None and shipment.status == "AWAITING_SUPPLEMENT":
+        await session.commit()
+        raise AppError("SUPPLEMENT_REQUIRED", "复重后需要客户补缴差价，暂不能完成揽收", 409)
     await DispatchService(session).confirm_pickup(task_id, user, f"pickup:{task_id}")
     await session.commit()
 

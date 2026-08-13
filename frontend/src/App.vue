@@ -3,7 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowRight, Bell, Box, ChatDotRound, Delete, Edit, Expand, Fold, Location, Plus, Search, Setting, User } from '@element-plus/icons-vue'
 import MarkdownIt from 'markdown-it'
-import { consumeAgentGrant, createAddress, createConversation, createShipment, deleteAddress, deleteConversation, getAgentDraft, getShipment, issueAgentGrant, listAddresses, listConversations, listMessages, listNotifications, listRegions, listShipments, login, markNotificationRead, me, streamAgentMessage, tracking, updateAddress, validateAgentDraft, type Address, type AddressInput, type AgentConversation, type AgentMessage, type Notification, type Region, type Shipment } from './api'
+import { consumeAgentGrant, createAddress, createConversation, createQuote, createShipment, deleteAddress, deleteConversation, getAgentDraft, getQuote, getShipment, issueAgentGrant, listAddresses, listConversations, listMessages, listNotifications, listRegions, listShipments, login, markNotificationRead, me, payQuote, streamAgentMessage, tracking, updateAddress, validateAgentDraft, type Address, type AddressInput, type AgentConversation, type AgentMessage, type Notification, type Region, type Shipment } from './api'
 import StationOperatorWorkspace from './StationOperatorWorkspace.vue'
 import CourierWorkspace from './CourierWorkspace.vue'
 import OperationsWorkspace from './OperationsWorkspace.vue'
@@ -40,7 +40,7 @@ const provinces = ref<Region[]>([])
 const cities = ref<Region[]>([])
 const districts = ref<Region[]>([])
 const regionLoading = ref(false)
-const shipmentForm = ref({ sender_address_id: '', receiver_address_id: '', pickup_method: 'DOOR_PICKUP', delivery_method: 'HOME_DELIVERY' })
+const shipmentForm = ref({ sender_address_id: '', receiver_address_id: '', pickup_method: 'DOOR_PICKUP', delivery_method: 'HOME_DELIVERY', package_category: '日用品', package_description: '', estimated_weight_grams: 1000, estimated_length_cm: 30, estimated_width_cm: 20, estimated_height_cm: 20, declared_value_cents: 0, special_instructions: '' })
 const conversations = ref<AgentConversation[]>([])
 const activeConversation = ref<AgentConversation | null>(null)
 const agentMessages = ref<AgentMessage[]>([])
@@ -159,13 +159,29 @@ async function submitShipment() {
   const form = shipmentForm.value
   if (!form.sender_address_id) { ElMessage.warning('请选择寄件地址'); return }
   if (!form.receiver_address_id) { ElMessage.warning('请选择收件地址'); return }
-  const draft = {
+  if (!form.package_description.trim()) { ElMessage.warning('请填写托寄物内容'); return }
+  const sender = addresses.value.find(item => item.id === form.sender_address_id)
+  const receiver = addresses.value.find(item => item.id === form.receiver_address_id)
+  if (!sender || !receiver) { ElMessage.warning('寄收地址无效'); return }
+  try {
+    const quote = await createQuote({ origin_district_code: sender.district_code, destination_district_code: receiver.district_code, pickup_method: 'DOOR_PICKUP', delivery_method: 'HOME_DELIVERY', actual_weight_grams: form.estimated_weight_grams, length_cm: form.estimated_length_cm, width_cm: form.estimated_width_cm, height_cm: form.estimated_height_cm, declared_value_cents: form.declared_value_cents })
+    const draft = {
     sender_address_id: form.sender_address_id,
     receiver_address_id: form.receiver_address_id,
     pickup_method: 'DOOR_PICKUP',
-    delivery_method: 'HOME_DELIVERY',
-  }
-  try { await createShipment({ draft, status: 'PENDING_PAYMENT' }); ElMessage.success('运单已创建'); view.value = 'shipments'; await loadData() } catch (error: any) { ElMessage.error(error.response?.data?.message || error.response?.data?.detail?.[0]?.msg || '运单创建失败') }
+    delivery_method: 'HOME_DELIVERY', quote_id: quote.id, package_category: form.package_category, package_description: form.package_description, estimated_weight_grams: form.estimated_weight_grams, estimated_length_cm: form.estimated_length_cm, estimated_width_cm: form.estimated_width_cm, estimated_height_cm: form.estimated_height_cm, declared_value_cents: form.declared_value_cents, special_instructions: form.special_instructions,
+    }
+    await createShipment({ draft, status: 'PENDING_PAYMENT' }); ElMessage.success(`运单已创建，待支付 ${(quote.total_cents / 100).toFixed(2)} 元`); view.value = 'shipments'; await loadData()
+  } catch (error: any) { ElMessage.error(error.response?.data?.message || error.response?.data?.detail?.[0]?.msg || '报价或运单创建失败') }
+}
+async function payShipment(item: Shipment) {
+  if (!item.quote_id) { ElMessage.warning('该运单没有有效报价'); return }
+  try {
+    const quote = await getQuote(item.quote_id)
+    await payQuote(quote.id, { shipment_id: item.id, amount_cents: quote.total_cents })
+    ElMessage.success('演示支付成功，已进入待揽收')
+    await loadData()
+  } catch (error: any) { ElMessage.error(error.response?.data?.message || '支付失败') }
 }
 function startNewConversation() {
   const now = new Date().toISOString()
@@ -264,7 +280,7 @@ onBeforeUnmount(() => window.removeEventListener('yitu-auth-expired', handleAuth
     <aside class="sidebar"><div class="logo"><span>Y</span><div>Yitu<small>物流工作台</small></div></div><div class="workspace-label">客户工作区</div><nav><button v-for="item in nav" :key="item.id" :class="{ active: view === item.id }" @click="view = item.id"><component :is="item.icon" /><span>{{ item.label }}</span><b v-if="item.badge">{{ item.badge }}</b></button></nav><div class="sidebar-foot"><el-button text @click="logout"><Setting /> 退出登录</el-button></div></aside>
     <main class="main"><header class="topbar"><div><div class="crumb">客户中心 <span>/</span> {{ nav.find(n => n.id === view)?.label ?? '运单详情' }}</div><h1>{{ view === 'detail' ? '运单详情' : nav.find(n => n.id === view)?.label }}</h1></div><div class="top-actions"><el-input v-model="query" placeholder="搜索运单号" :prefix-icon="Search" clearable /><el-avatar :size="34">{{ user?.display_name?.slice(0, 1) }}</el-avatar><span class="user-name">{{ user?.display_name || '演示客户' }}</span></div></header>
       <section v-loading="loading" class="content">
-        <div v-if="view === 'shipments'" class="page-block"><div class="section-head"><div><p class="section-kicker">TRACKING OVERVIEW</p><h2>最近运单</h2></div><el-button type="primary" @click="view = 'create'"><Plus /> 新建寄件</el-button></div><div class="stat-strip"><div><small>全部运单</small><strong>{{ total }}</strong></div><div><small>运输中</small><strong>{{ shipments.filter(s => ['IN_LINEHAUL', 'OUT_FOR_DELIVERY'].includes(s.status)).length }}</strong></div><div><small>待支付</small><strong>{{ shipments.filter(s => s.status === 'PENDING_PAYMENT').length }}</strong></div></div><el-table :data="shipments.filter(s => !query || s.shipment_no.includes(query))" class="shipment-table" @row-click="openShipment"><el-table-column prop="shipment_no" label="运单号" min-width="190"><template #default="{ row }"><span class="shipment-no">{{ row.shipment_no }}</span></template></el-table-column><el-table-column prop="status" label="状态"><template #default="{ row }"><el-tag :type="row.status === 'DELIVERED' ? 'success' : row.status === 'PENDING_PAYMENT' ? 'warning' : row.status === 'CANCELLED' ? 'danger' : 'primary'" effect="light">{{ statusMap[row.status] || row.status }}</el-tag></template></el-table-column><el-table-column label="操作" width="100"><template #default="{ row }"><el-button text type="primary" @click.stop="openShipment(row)">查看 <ArrowRight /></el-button></template></el-table-column></el-table><el-pagination v-if="total > 20" v-model:current-page="page" layout="prev, pager, next" :total="total" @current-change="loadData" /></div>
+        <div v-if="view === 'shipments'" class="page-block"><div class="section-head"><div><p class="section-kicker">TRACKING OVERVIEW</p><h2>最近运单</h2></div><el-button type="primary" @click="view = 'create'"><Plus /> 新建寄件</el-button></div><div class="stat-strip"><div><small>全部运单</small><strong>{{ total }}</strong></div><div><small>运输中</small><strong>{{ shipments.filter(s => ['IN_LINEHAUL', 'OUT_FOR_DELIVERY'].includes(s.status)).length }}</strong></div><div><small>待支付</small><strong>{{ shipments.filter(s => s.status === 'PENDING_PAYMENT').length }}</strong></div></div><el-table :data="shipments.filter(s => !query || s.shipment_no.includes(query))" class="shipment-table" @row-click="openShipment"><el-table-column prop="shipment_no" label="运单号" min-width="190"><template #default="{ row }"><span class="shipment-no">{{ row.shipment_no }}</span></template></el-table-column><el-table-column prop="status" label="状态"><template #default="{ row }"><el-tag :type="row.status === 'DELIVERED' ? 'success' : row.status === 'PENDING_PAYMENT' ? 'warning' : row.status === 'CANCELLED' ? 'danger' : 'primary'" effect="light">{{ statusMap[row.status] || row.status }}</el-tag></template></el-table-column><el-table-column label="操作" width="180"><template #default="{ row }"><el-button v-if="row.status === 'PENDING_PAYMENT'" text type="success" @click.stop="payShipment(row)">演示支付</el-button><el-button text type="primary" @click.stop="openShipment(row)">查看 <ArrowRight /></el-button></template></el-table-column></el-table><el-pagination v-if="total > 20" v-model:current-page="page" layout="prev, pager, next" :total="total" @current-change="loadData" /></div>
         <div v-else-if="view === 'create'" class="page-block narrow"><div class="section-head"><div><p class="section-kicker">NEW SHIPMENT</p><h2>创建寄件</h2></div></div><el-card shadow="never" class="form-card"><el-form label-position="top"><div class="form-grid"><el-form-item label="寄件方式"><el-tag type="success" size="large">上门取件</el-tag></el-form-item><el-form-item label="派送方式"><el-tag type="success" size="large">送货上门</el-tag></el-form-item></div><el-form-item label="寄件地址"><el-select v-model="shipmentForm.sender_address_id" placeholder="选择寄件地址" filterable><el-option v-for="a in addresses" :key="a.id" :label="`${a.recipient_name} · ${a.full_address}`" :value="a.id" /></el-select></el-form-item><el-form-item label="收件地址"><el-select v-model="shipmentForm.receiver_address_id" placeholder="选择收件地址" filterable><el-option v-for="a in addresses" :key="a.id" :label="`${a.recipient_name} · ${a.full_address}`" :value="a.id" /></el-select></el-form-item><div class="service-tip">当前仅支持上门取件和送货上门；所选区县必须已有服务网点。</div><el-button type="primary" size="large" @click="submitShipment">创建运单 <ArrowRight /></el-button></el-form></el-card></div>
         <div v-else-if="view === 'agent'" :class="['agent-page', { 'chat-list-collapsed': chatListCollapsed }]">
           <aside :class="['chat-list', { collapsed: chatListCollapsed }]">

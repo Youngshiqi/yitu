@@ -39,6 +39,11 @@ class Settings(BaseSettings):
     agent_model_api_key: str | None = None
     agent_model_name: str = ""
     agent_model_timeout_seconds: float = 60.0
+    payment_provider: Literal["mock", "alipay_sandbox", "alipay"] = "mock"
+    alipay_app_id: str | None = None
+    alipay_private_key: str | None = None
+    alipay_public_key: str | None = None
+    alipay_notify_url: str | None = None
 
     model_config = SettingsConfigDict(env_prefix="YITU_", env_file=".env", extra="ignore")
 

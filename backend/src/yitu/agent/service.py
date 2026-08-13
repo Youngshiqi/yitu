@@ -484,6 +484,14 @@ class AgentConversationService:
             else:
                 patch_data["receiver_address_id"] = receiver.id
                 patch_data["destination_district_code"] = receiver.district_code
+        for source, target in (
+            ("actual_weight_grams", "estimated_weight_grams"),
+            ("length_cm", "estimated_length_cm"),
+            ("width_cm", "estimated_width_cm"),
+            ("height_cm", "estimated_height_cm"),
+        ):
+            if source in patch_data:
+                patch_data[target] = patch_data.pop(source)
         if patch_data:
             draft = await DraftService(self._session).update(
                 conversation_id, actor, DraftPatch.model_validate(patch_data)

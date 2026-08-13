@@ -135,7 +135,16 @@ FastAPI 参数校验错误仍可能返回标准 `422` 结构。
     "origin_station_id": null,
     "destination_station_id": null,
     "pickup_method": "DOOR_PICKUP",
-    "delivery_method": "HOME_DELIVERY"
+    "delivery_method": "HOME_DELIVERY",
+    "quote_id": "报价 UUID",
+    "package_category": "日用品",
+    "package_description": "衣服和书籍",
+    "estimated_weight_grams": 1200,
+    "estimated_length_cm": 30,
+    "estimated_width_cm": 20,
+    "estimated_height_cm": 10,
+    "declared_value_cents": 0,
+    "special_instructions": "请勿重压"
   },
   "status": "PENDING_PAYMENT"
 }

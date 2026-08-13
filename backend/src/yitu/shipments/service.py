@@ -10,6 +10,7 @@ from yitu.identity.models import Role
 from yitu.identity.service import CurrentUser, require_resource_owner
 from yitu.payments.models import PaymentTransaction
 from yitu.platform.audit import AuditService
+from yitu.platform.clock import Clock
 from yitu.platform.errors import AppError
 from yitu.platform.idempotency import (
     IdempotencyResponse,
@@ -17,9 +18,12 @@ from yitu.platform.idempotency import (
     canonical_json_sha256,
 )
 from yitu.platform.outbox import OutboxService
+from yitu.pricing.models import QuoteSnapshot
+from yitu.pricing.schemas import ReweighRequest
+from yitu.pricing.service import PricingService
 from yitu.shipments.enums import DeliveryMethod, PickupMethod, ShipmentStatus
-from yitu.shipments.models import Shipment
-from yitu.shipments.schemas import CreateShipmentCommand
+from yitu.shipments.models import Shipment, ShipmentPackage
+from yitu.shipments.schemas import CreateShipmentCommand, ReweighCommand
 from yitu.shipments.state_machine import transition
 from yitu.sla.models import SLAInstance
 from yitu.stations.service import match_station
@@ -36,6 +40,8 @@ class ShipmentView(BaseModel):
     shipment_no: str
     owner_id: UUID
     status: ShipmentStatus
+    quote_id: UUID | None = None
+    package_id: UUID | None = None
 
 
 class ShipmentListResponse(BaseModel):
@@ -140,12 +146,44 @@ class ShipmentApplicationService:
                 require_resource_owner(sender.owner_id, actor)
             if receiver is not None:
                 require_resource_owner(receiver.owner_id, actor)
+            if draft.quote_id is None:
+                raise AppError("QUOTE_REQUIRED", "创建运单前必须先生成报价", 409)
+            if any(
+                value is None
+                for value in (
+                    draft.package_category,
+                    draft.package_description,
+                    draft.estimated_weight_grams,
+                    draft.estimated_length_cm,
+                    draft.estimated_width_cm,
+                    draft.estimated_height_cm,
+                )
+            ):
+                raise AppError("PACKAGE_REQUIRED", "创建运单前必须填写包裹申报信息", 409)
+            quote = await self._session.get(QuoteSnapshot, draft.quote_id)
+            if quote is None or quote.owner_id != actor.id:
+                raise AppError("QUOTE_NOT_FOUND", "报价不存在或不属于当前客户", 409)
+            quote_input = quote.input_snapshot
+            if quote_input.get("actual_weight_grams") != draft.estimated_weight_grams or quote_input.get("length_cm") != draft.estimated_length_cm or quote_input.get("width_cm") != draft.estimated_width_cm or quote_input.get("height_cm") != draft.estimated_height_cm:
+                raise AppError("QUOTE_INPUT_MISMATCH", "报价与包裹申报信息不一致，请重新报价", 409)
             origin_station_id = draft.origin_station_id
             destination_station_id = draft.destination_station_id
             if draft.pickup_method.value == "DOOR_PICKUP" and sender is not None:
                 origin_station_id = (await match_station(self._session, sender.district_code, "HOME_PICKUP")).id
             if draft.delivery_method.value == "HOME_DELIVERY" and receiver is not None:
                 destination_station_id = (await match_station(self._session, receiver.district_code, "HOME_DELIVERY")).id
+            package = ShipmentPackage(
+                category=draft.package_category,
+                description=draft.package_description,
+                estimated_weight_grams=draft.estimated_weight_grams,
+                estimated_length_cm=draft.estimated_length_cm,
+                estimated_width_cm=draft.estimated_width_cm,
+                estimated_height_cm=draft.estimated_height_cm,
+                declared_value_cents=draft.declared_value_cents,
+                special_instructions=draft.special_instructions,
+            )
+            self._session.add(package)
+            await self._session.flush()
             shipment = Shipment(
                 shipment_no=f"YT{uuid4().hex[:16].upper()}",
                 owner_id=actor.id,
@@ -156,6 +194,8 @@ class ShipmentApplicationService:
                 pickup_method=draft.pickup_method,
                 delivery_method=draft.delivery_method,
                 status=ShipmentStatus.PENDING_PAYMENT,
+                quote_id=quote.id,
+                package_id=package.id,
             )
             self._session.add(shipment)
             await self._session.flush()
@@ -226,6 +266,57 @@ class ShipmentApplicationService:
                 latest_sla.promised_delivery_at if latest_sla is not None else None
             ),
         )
+
+    async def reweigh(self, shipment_id: UUID, command: ReweighCommand, actor: CurrentUser) -> QuoteSnapshot:
+        """锁定运单并保存复重事实，返回基于实际尺寸的新报价。"""
+        if actor.role is not Role.COURIER:
+            raise AppError("FORBIDDEN_ROLE", "只有揽收快递员可以复重", 403)
+        shipment = await self._session.get(Shipment, shipment_id)
+        if shipment is None or shipment.package_id is None or shipment.quote_id is None:
+            raise AppError("SHIPMENT_PACKAGE_REQUIRED", "运单缺少包裹或报价", 409)
+        package = await self._session.get(ShipmentPackage, shipment.package_id)
+        if package is None:
+            raise AppError("SHIPMENT_PACKAGE_REQUIRED", "运单包裹不存在", 409)
+        package.actual_weight_grams = command.actual_weight_grams
+        package.actual_length_cm = command.actual_length_cm
+        package.actual_width_cm = command.actual_width_cm
+        package.actual_height_cm = command.actual_height_cm
+        package.reweighed_by = actor.id
+        package.reweighed_at = Clock.now()
+        quote = await PricingService(self._session).reweigh(
+            shipment.quote_id,
+            ReweighRequest(
+                actual_weight_grams=command.actual_weight_grams,
+                length_cm=command.actual_length_cm,
+                width_cm=command.actual_width_cm,
+                height_cm=command.actual_height_cm,
+            ),
+            actor,
+        )
+        paid_total = await self._session.scalar(
+            select(
+                func.coalesce(
+                    func.sum(
+                        case(
+                            (PaymentTransaction.transaction_type == "REFUND", -PaymentTransaction.amount_cents),
+                            else_=PaymentTransaction.amount_cents,
+                        )
+                    ),
+                    0,
+                )
+            ).where(
+                PaymentTransaction.shipment_id == shipment.id,
+                PaymentTransaction.status == "SUCCEEDED",
+            )
+        )
+        difference = quote.total_cents - int(paid_total or 0)
+        if difference > 0:
+            shipment.status = ShipmentStatus.AWAITING_SUPPLEMENT
+        elif difference < 0:
+            self._session.add(PaymentTransaction(owner_id=shipment.owner_id, quote_id=quote.id, shipment_id=shipment.id, transaction_type="REFUND", status="SUCCEEDED", amount_cents=-difference, idempotency_key=f"mock-reweigh-refund:{shipment.id}:{quote.id}", request_hash=canonical_json_sha256({"shipment_id": str(shipment.id), "quote_id": str(quote.id), "amount_cents": -difference}), created_at=Clock.now()))
+        shipment.quote_id = quote.id
+        await self._session.flush()
+        return quote
 
 
 class ShipmentTransitionService:

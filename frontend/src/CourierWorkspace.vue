@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Bell, Box, Check, CircleCheck, Clock, Connection, Refresh, Setting, Van, Warning } from '@element-plus/icons-vue'
-import { acceptCourierTask, confirmCourierDelivery, confirmCourierPickup, listCourierTasks, reportException, startCourierDelivery, type CourierTask } from './api'
+import { acceptCourierTask, confirmCourierDelivery, confirmCourierPickup, confirmPickupWithReweigh, listCourierTasks, reportException, startCourierDelivery, type CourierTask } from './api'
 
 defineProps<{ user: { display_name: string; role: string; station_id?: string | null } }>()
 defineEmits<{ logout: [] }>()
@@ -16,6 +16,8 @@ const exceptionDialog = ref(false)
 const selectedTask = ref<CourierTask | null>(null)
 const signerName = ref('')
 const exceptionForm = ref({ case_type: 'PICKUP_FAILED', description: '' })
+const reweighDialog = ref(false)
+const reweighForm = ref({ actual_weight_grams: 1000, actual_length_cm: 30, actual_width_cm: 20, actual_height_cm: 20, remark: '' })
 const taskPage = ref(1)
 const taskPageSize = 5
 
@@ -36,11 +38,15 @@ async function loadTasks() {
 async function execute(task: CourierTask) {
   try {
     if (task.status === 'AVAILABLE') await acceptCourierTask(task.id)
-    else if (task.task_type === 'PICKUP') await confirmCourierPickup(task.id)
+    else if (task.task_type === 'PICKUP') { selectedTask.value = task; reweighDialog.value = true; return }
     else await startCourierDelivery(task.shipment_id)
     ElMessage.success(task.status === 'AVAILABLE' ? '接单成功' : task.task_type === 'PICKUP' ? '取件已确认' : '已开始派送')
     await loadTasks()
   } catch (error: any) { ElMessage.error(error.response?.data?.message || '任务状态已变化，请刷新后重试') }
+}
+async function submitReweigh() {
+  if (!selectedTask.value) return
+  try { await confirmPickupWithReweigh(selectedTask.value.id, reweighForm.value); reweighDialog.value = false; ElMessage.success('复重并揽收已确认'); await loadTasks() } catch (error: any) { ElMessage.error(error.response?.data?.message || '复重提交失败') }
 }
 function openSigner(task: CourierTask) { selectedTask.value = task; signerName.value = ''; signerDialog.value = true }
 async function submitSigner() {
@@ -70,5 +76,6 @@ onMounted(loadTasks)
     </main>
     <el-dialog v-model="signerDialog" title="确认签收" width="430px"><p class="dialog-tip">请确认包裹已经交给收件人，再填写签收人姓名。</p><el-form label-position="top"><el-form-item label="签收人"><el-input v-model="signerName" placeholder="请输入签收人姓名" /></el-form-item></el-form><template #footer><el-button @click="signerDialog = false">取消</el-button><el-button type="primary" @click="submitSigner">确认签收</el-button></template></el-dialog>
     <el-dialog v-model="exceptionDialog" title="上报履约异常" width="480px"><el-form label-position="top"><el-form-item label="异常类型"><el-select v-model="exceptionForm.case_type"><el-option label="取件失败" value="PICKUP_FAILED" /><el-option label="地址错误" value="ADDRESS_ERROR" /><el-option label="无法联系收件人" value="RECIPIENT_UNREACHABLE" /><el-option label="拒收" value="REFUSED" /><el-option label="包裹破损" value="DAMAGE" /></el-select></el-form-item><el-form-item label="现场说明"><el-input v-model="exceptionForm.description" type="textarea" :rows="4" placeholder="说明现场情况和已采取的措施" /></el-form-item></el-form><template #footer><el-button @click="exceptionDialog = false">取消</el-button><el-button type="danger" @click="submitException">提交异常</el-button></template></el-dialog>
+    <el-dialog v-model="reweighDialog" title="填写实际复重" width="480px"><el-form label-position="top"><el-form-item label="实际重量（克）"><el-input-number v-model="reweighForm.actual_weight_grams" :min="1" /></el-form-item><div class="form-grid"><el-form-item label="长（厘米）"><el-input-number v-model="reweighForm.actual_length_cm" :min="1" /></el-form-item><el-form-item label="宽（厘米）"><el-input-number v-model="reweighForm.actual_width_cm" :min="1" /></el-form-item><el-form-item label="高（厘米）"><el-input-number v-model="reweighForm.actual_height_cm" :min="1" /></el-form-item></div><el-form-item label="现场备注"><el-input v-model="reweighForm.remark" type="textarea" /></el-form-item></el-form><template #footer><el-button @click="reweighDialog = false">取消</el-button><el-button type="primary" @click="submitReweigh">提交复重并完成揽收</el-button></template></el-dialog>
   </div>
 </template>

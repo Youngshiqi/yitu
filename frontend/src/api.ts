@@ -14,14 +14,14 @@ http.interceptors.response.use((response) => response, (error) => {
   return Promise.reject(error)
 })
 
-export type Shipment = { id: string; shipment_no: string; owner_id: string; status: string }
-export type ShipmentDraftInput = { sender_address_id?: string; receiver_address_id?: string; origin_station_id?: string; destination_station_id?: string; pickup_method: string; delivery_method: string }
+export type Shipment = { id: string; shipment_no: string; owner_id: string; status: string; quote_id?: string; package_id?: string }
+export type ShipmentDraftInput = { sender_address_id?: string; receiver_address_id?: string; origin_station_id?: string; destination_station_id?: string; pickup_method: string; delivery_method: string; quote_id?: string; package_category?: string; package_description?: string; estimated_weight_grams?: number; estimated_length_cm?: number; estimated_width_cm?: number; estimated_height_cm?: number; declared_value_cents?: number; special_instructions?: string }
 export type Region = { id: string; name: string; level: 'PROVINCE' | 'CITY' | 'DISTRICT' }
 export type ServiceType = 'HOME_PICKUP' | 'STATION_DROP_OFF' | 'HOME_DELIVERY' | 'STATION_PICKUP'
 export type StationServiceArea = { province_region_id: string; city_region_id: string; district_region_id: string; district_code: string; district_name: string; province_name: string; city_name: string; service_types: ServiceType[] }
 export type AdminStation = { id: string; code: string; name: string; district_code: string; province_region_id: string; city_region_id: string; district_region_id: string; province_name: string; city_name: string; district_name: string; enabled: boolean; created_at: string; updated_at: string; service_areas: StationServiceArea[] }
 export type StationInput = { code: string; name: string; district_region_id: string; service_areas: Array<{ district_region_id: string; service_types: ServiceType[] }> }
-export type Address = { id: string; label?: string; recipient_name: string; phone: string; province_region_id: string; province_name: string; city_region_id: string; city_name: string; district_region_id: string; district_name: string; detail: string; full_address: string }
+export type Address = { id: string; label?: string; recipient_name: string; phone: string; province_region_id: string; province_name: string; city_region_id: string; city_name: string; district_region_id: string; district_name: string; district_code: string; detail: string; full_address: string }
 export type AddressInput = { label?: string; recipient_name: string; phone: string; province_region_id: string; city_region_id: string; district_region_id: string; detail: string }
 export type Notification = { id: string; title: string; content: string; status: string; created_at: string; read_at?: string }
 export type AgentConversation = { id: string; title?: string; status: string; created_at: string; updated_at: string }
@@ -78,8 +78,9 @@ export async function createQuote(payload: {
   declared_value_cents?: number
 }) { return (await http.post('/pricing/quotes', payload)).data as Quote }
 export async function getQuote(id: string) { return (await http.get(`/pricing/quotes/${id}`)).data as Quote }
-export async function payQuote(quoteId: string, payload: { shipment_id: string; amount_cents: number }) { return (await http.post(`/payments/quotes/${quoteId}/pay`, payload)).data }
+export async function payQuote(quoteId: string, payload: { shipment_id: string; amount_cents: number }) { return (await http.post(`/payments/quotes/${quoteId}/pay`, payload, { headers: { 'Idempotency-Key': crypto.randomUUID() } })).data }
 export async function confirmPayment(shipmentId: string) { return (await http.post(`/shipments/${shipmentId}/confirm-payment`)).data }
+export async function confirmPickupWithReweigh(taskId: string, payload: { actual_weight_grams: number; actual_length_cm: number; actual_width_cm: number; actual_height_cm: number; remark?: string }) { return (await http.post(`/dispatch/tasks/${taskId}/confirm-pickup-with-reweigh`, payload)).data }
 
 // ---- 通知 ----
 export async function listNotifications() { return (await http.get('/notifications')).data as Notification[] }

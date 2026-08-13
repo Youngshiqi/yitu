@@ -36,5 +36,6 @@ class AddressResponse(BaseModel):
     city_name: str
     district_region_id: UUID
     district_name: str
+    district_code: str
     detail: str
     full_address: str

@@ -5,6 +5,7 @@ from yitu.shipments.enums import ShipmentStatus
 
 _TRANSITIONS: Mapping[ShipmentStatus, frozenset[ShipmentStatus]] = {
     ShipmentStatus.PENDING_PAYMENT: frozenset({ShipmentStatus.PENDING_PICKUP, ShipmentStatus.WAITING_FOR_DROPOFF, ShipmentStatus.CANCELLED}),
+    ShipmentStatus.AWAITING_SUPPLEMENT: frozenset({ShipmentStatus.PICKED_UP, ShipmentStatus.CANCELLED}),
     ShipmentStatus.PENDING_PICKUP: frozenset({ShipmentStatus.PICKUP_ASSIGNED, ShipmentStatus.CANCELLED}),
     ShipmentStatus.PICKUP_ASSIGNED: frozenset({ShipmentStatus.PICKED_UP}),
     ShipmentStatus.WAITING_FOR_DROPOFF: frozenset({ShipmentStatus.AT_ORIGIN_STATION, ShipmentStatus.CANCELLED}),
@@ -24,6 +25,7 @@ _TRANSITIONS: Mapping[ShipmentStatus, frozenset[ShipmentStatus]] = {
 
 _ACTIONS: Mapping[ShipmentStatus, frozenset[str]] = {
     ShipmentStatus.PENDING_PAYMENT: frozenset({"confirm_payment", "cancel"}),
+    ShipmentStatus.AWAITING_SUPPLEMENT: frozenset({"pay_supplement", "cancel"}),
     ShipmentStatus.PENDING_PICKUP: frozenset({"assign_pickup", "cancel"}),
     ShipmentStatus.PICKUP_ASSIGNED: frozenset({"confirm_pickup"}),
     ShipmentStatus.WAITING_FOR_DROPOFF: frozenset({"confirm_origin_arrival", "cancel"}),

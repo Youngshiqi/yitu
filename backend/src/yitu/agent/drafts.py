@@ -35,7 +35,14 @@ class DraftPatch(BaseModel):
     length_cm: int | None = Field(default=None, gt=0)
     width_cm: int | None = Field(default=None, gt=0)
     height_cm: int | None = Field(default=None, gt=0)
+    estimated_weight_grams: int | None = Field(default=None, gt=0)
+    estimated_length_cm: int | None = Field(default=None, gt=0)
+    estimated_width_cm: int | None = Field(default=None, gt=0)
+    estimated_height_cm: int | None = Field(default=None, gt=0)
     declared_value_cents: int | None = Field(default=None, ge=0)
+    package_category: str | None = Field(default=None, max_length=64)
+    package_description: str | None = Field(default=None, max_length=2000)
+    special_instructions: str | None = Field(default=None, max_length=2000)
 
 
 class DraftView(BaseModel):
@@ -165,6 +172,15 @@ class DraftService:
                         "destination_station_id",
                         "pickup_method",
                         "delivery_method",
+                        "quote_id",
+                        "package_category",
+                        "package_description",
+                        "actual_weight_grams",
+                        "length_cm",
+                        "width_cm",
+                "height_cm",
+                "declared_value_cents",
+                        "special_instructions",
                     )
                     if key in payload
                 }
@@ -183,19 +199,15 @@ class DraftService:
         draft = await self.get_or_create(conversation_id, actor)
         request = QuoteRequest.model_validate(
             {
-                key: draft.payload[key]
-                for key in (
-                    "origin_district_code",
-                    "destination_district_code",
-                    "pickup_method",
-                    "delivery_method",
-                    "actual_weight_grams",
-                    "length_cm",
-                    "width_cm",
-                    "height_cm",
-                    "declared_value_cents",
-                )
-                if key in draft.payload
+                "origin_district_code": draft.payload["origin_district_code"],
+                "destination_district_code": draft.payload["destination_district_code"],
+                "pickup_method": draft.payload["pickup_method"],
+                "delivery_method": draft.payload["delivery_method"],
+                "actual_weight_grams": draft.payload["estimated_weight_grams"],
+                "length_cm": draft.payload["estimated_length_cm"],
+                "width_cm": draft.payload["estimated_width_cm"],
+                "height_cm": draft.payload["estimated_height_cm"],
+                "declared_value_cents": draft.payload.get("declared_value_cents", 0),
             }
         )
         quote = await PricingService(self._session).quote(
@@ -205,6 +217,7 @@ class DraftService:
                 f"agent-draft:{draft.id}:revision:{draft.revision}:quote"
             ),
         )
+        draft.payload["quote_id"] = str(quote.id)
         draft.quote_id = quote.id
         draft.quote_version = quote.rule_version
         draft.status = "READY_FOR_CONFIRMATION"
@@ -237,11 +250,14 @@ class DraftService:
         for field in (
             "origin_district_code",
             "destination_district_code",
-            "actual_weight_grams",
-            "length_cm",
-            "width_cm",
-            "height_cm",
+            "estimated_weight_grams",
+            "estimated_length_cm",
+            "estimated_width_cm",
+            "estimated_height_cm",
         ):
+            if not payload.get(field):
+                missing.append(field)
+        for field in ("package_category", "package_description"):
             if not payload.get(field):
                 missing.append(field)
         return missing

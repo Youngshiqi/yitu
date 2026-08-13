@@ -70,6 +70,10 @@ class PaymentService:
         async def operation() -> IdempotencyResponse:
             transaction = PaymentTransaction(owner_id=actor.id, quote_id=quote.id, shipment_id=shipment.id, transaction_type="SUPPLEMENT", status="SUCCEEDED", amount_cents=request.amount_cents, idempotency_key=idempotency_key, request_hash=canonical_json_sha256(request.model_dump(mode="json")), created_at=Clock.now())
             self._session.add(transaction)
+            if ShipmentStatus(shipment.status) is ShipmentStatus.AWAITING_SUPPLEMENT:
+                await ShipmentTransitionService(self._session).transition(
+                    shipment, ShipmentStatus.PICKED_UP, actor, "pay_supplement", f"supplement:{shipment.id}:{quote.id}"
+                )
             await self._session.flush()
             return IdempotencyResponse(201, PaymentTransactionView.model_validate(transaction).model_dump(mode="json"))
 
@@ -110,6 +114,8 @@ class PaymentService:
         require_resource_owner(shipment.owner_id, actor)
         if quote.owner_id != shipment.owner_id:
             raise AppError("FORBIDDEN_RESOURCE_OWNER", "报价和运单不属于同一客户", 403)
+        if shipment.quote_id != quote.id:
+            raise AppError("QUOTE_NOT_BOUND_TO_SHIPMENT", "该报价未绑定当前运单", 409)
         return quote, shipment
 
     async def _paid_total(self, shipment_id: UUID) -> int:

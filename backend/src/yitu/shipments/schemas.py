@@ -16,6 +16,16 @@ class ShipmentDraft(BaseModel):
     destination_station_id: UUID | None = None
     pickup_method: PickupMethod
     delivery_method: DeliveryMethod
+    quote_id: UUID | None = None
+    package_category: str | None = Field(default=None, min_length=1, max_length=64)
+    package_description: str | None = Field(default=None, min_length=1, max_length=2000)
+    estimated_weight_grams: int | None = Field(default=None, gt=0)
+    estimated_length_cm: int | None = Field(default=None, gt=0)
+    estimated_width_cm: int | None = Field(default=None, gt=0)
+    estimated_height_cm: int | None = Field(default=None, gt=0)
+    declared_value_cents: int = Field(default=0, ge=0)
+    special_instructions: str | None = Field(default=None, max_length=2000)
+
 
     @model_validator(mode="after")
     def validate_service_combination(self) -> "ShipmentDraft":
@@ -51,6 +61,16 @@ class ShipmentResumeCommand(BaseModel):
 
     target_status: ShipmentStatus
     reason: str = Field(min_length=1, max_length=1000)
+
+
+class ReweighCommand(BaseModel):
+    """快递员揽收时提交的实际重量、尺寸和现场备注。"""
+
+    actual_weight_grams: int = Field(gt=0)
+    actual_length_cm: int = Field(gt=0)
+    actual_width_cm: int = Field(gt=0)
+    actual_height_cm: int = Field(gt=0)
+    remark: str | None = Field(default=None, max_length=1000)
 
 
 class ShipmentResumeView(BaseModel):
