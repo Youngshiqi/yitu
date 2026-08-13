@@ -2,7 +2,8 @@
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { ArrowRight, Bell, Box, ChatDotRound, Location, Plus, Search, Setting, User } from '@element-plus/icons-vue'
-import { consumeAgentGrant, createAddress, createConversation, createShipment, getAgentDraft, getShipment, issueAgentGrant, listAddresses, listConversations, listMessages, listNotifications, listShipments, listStations, login, markNotificationRead, me, sendAgentMessage, tracking, validateAgentDraft, type Address, type AgentConversation, type AgentMessage, type Notification, type Shipment } from './api'
+import { consumeAgentGrant, createAddress, createShipment, getAgentDraft, getShipment, issueAgentGrant, listAddresses, listConversations, listMessages, listNotifications, listShipments, listStations, login, markNotificationRead, me, sendAgentMessage, tracking, validateAgentDraft, type Address, type AgentConversation, type AgentMessage, type Notification, type Shipment } from './api'
+import StationOperatorWorkspace from './StationOperatorWorkspace.vue'
 import CourierWorkspace from './CourierWorkspace.vue'
 import OperationsWorkspace from './OperationsWorkspace.vue'
 import SystemAdminWorkspace from './SystemAdminWorkspace.vue'
@@ -26,6 +27,8 @@ const loginAccounts = [
   { login_name: 'customer.demo', label: '客户 · customer.demo', role: 'CUSTOMER' },
   { login_name: 'courier.bijing.demo', label: '北京快递员 · courier.bijing.demo', role: 'COURIER' },
   { login_name: 'courier.shanghai.demo', label: '上海快递员 · courier.shanghai.demo', role: 'COURIER' },
+  { login_name: 'operator.beijing.demo', label: '北京网点操作员 · operator.beijing.demo', role: 'STATION_OPERATOR' },
+  { login_name: 'operator.shanghai.demo', label: '上海网点操作员 · operator.shanghai.demo', role: 'STATION_OPERATOR' },
   { login_name: 'operations.demo', label: '运营管理员 · operations.demo', role: 'OPERATIONS_ADMIN' },
   { login_name: 'system.demo', label: '系统管理员 · system.demo', role: 'SYSTEM_ADMIN' },
 ]
@@ -39,7 +42,26 @@ const agentDraft = ref<any>(null)
 const agentInput = ref('')
 const agentSending = ref(false)
 
-const statusMap: Record<string, string> = { PENDING_PAYMENT: '待支付', CREATED: '已创建', IN_TRANSIT: '运输中', OUT_FOR_DELIVERY: '派送中', DELIVERED: '已签收', AT_DESTINATION_STATION: '已到达网点' }
+const statusMap: Record<string, string> = {
+  PENDING_PAYMENT: '待支付',
+  PENDING_PICKUP: '待揽收',
+  PICKUP_ASSIGNED: '已分配揽收',
+  WAITING_FOR_DROPOFF: '等待客户自寄',
+  PICKED_UP: '已揽收',
+  AT_ORIGIN_STATION: '已到达始发网点',
+  IN_LINEHAUL: '干线运输中',
+  AT_DESTINATION_STATION: '已到达目标网点',
+  DELIVERY_ASSIGNED: '已分配派送',
+  OUT_FOR_DELIVERY: '派送中',
+  WAITING_FOR_RECIPIENT_PICKUP: '等待客户自取',
+  DELIVERED: '已签收',
+  CANCELLED: '已取消',
+  RETURN_REQUESTED: '已申请退回',
+  RETURN_APPROVED: '退回已批准',
+  RETURNING: '退回运输中',
+  RETURNED_TO_ORIGIN_STATION: '已退回始发网点',
+  RETURN_COMPLETED: '退回已完成',
+}
 const nav = computed(() => [
   { id: 'shipments', label: '我的运单', icon: Box },
   { id: 'create', label: '我要寄件', icon: Plus },
@@ -75,13 +97,14 @@ onMounted(async () => { if (loggedIn.value) { try { user.value = await me(); if 
     <el-card class="login-card" shadow="never"><div class="brand-mark">Y</div><h2>欢迎回来</h2><p class="muted">选择身份进入对应工作台</p><el-form @submit.prevent="doLogin" @keyup.enter="doLogin"><el-form-item label="登录身份"><el-select v-model="loginForm.login_name" size="large" class="full-input" filterable><el-option v-for="account in loginAccounts" :key="account.login_name" :label="account.label" :value="account.login_name"><div class="login-option"><span>{{ account.label }}</span><small>{{ account.role }}</small></div></el-option></el-select></el-form-item><el-form-item label="密码"><el-input v-model="loginForm.password" type="password" show-password size="large" /></el-form-item><el-button type="primary" size="large" class="full-btn" @click="doLogin">进入工作台 <ArrowRight /></el-button></el-form><div class="login-note">演示环境统一密码：YituDemo2026!</div></el-card>
   </div>
   <CourierWorkspace v-else-if="user?.role === 'COURIER'" :user="user" @logout="logout" />
+  <StationOperatorWorkspace v-else-if="user?.role === 'STATION_OPERATOR'" :user="user" @logout="logout" />
   <OperationsWorkspace v-else-if="user?.role === 'OPERATIONS_ADMIN'" :user="user" @logout="logout" />
   <SystemAdminWorkspace v-else-if="user?.role === 'SYSTEM_ADMIN'" :user="user" @logout="logout" />
   <div v-else class="app-shell">
     <aside class="sidebar"><div class="logo"><span>Y</span><div>Yitu<small>物流工作台</small></div></div><div class="workspace-label">客户工作区</div><nav><button v-for="item in nav" :key="item.id" :class="{ active: view === item.id }" @click="view = item.id"><component :is="item.icon" /><span>{{ item.label }}</span><b v-if="item.badge">{{ item.badge }}</b></button></nav><div class="sidebar-foot"><el-button text @click="logout"><Setting /> 退出登录</el-button></div></aside>
     <main class="main"><header class="topbar"><div><div class="crumb">客户中心 <span>/</span> {{ nav.find(n => n.id === view)?.label ?? '运单详情' }}</div><h1>{{ view === 'detail' ? '运单详情' : nav.find(n => n.id === view)?.label }}</h1></div><div class="top-actions"><el-input v-model="query" placeholder="搜索运单号" :prefix-icon="Search" clearable /><el-avatar :size="34">{{ user?.display_name?.slice(0, 1) }}</el-avatar><span class="user-name">{{ user?.display_name || '演示客户' }}</span></div></header>
       <section v-loading="loading" class="content">
-        <div v-if="view === 'shipments'" class="page-block"><div class="section-head"><div><p class="section-kicker">TRACKING OVERVIEW</p><h2>最近运单</h2></div><el-button type="primary" @click="view = 'create'"><Plus /> 新建寄件</el-button></div><div class="stat-strip"><div><small>全部运单</small><strong>{{ total }}</strong></div><div><small>运输中</small><strong>{{ shipments.filter(s => s.status === 'IN_TRANSIT').length }}</strong></div><div><small>待支付</small><strong>{{ shipments.filter(s => s.status === 'PENDING_PAYMENT').length }}</strong></div></div><el-table :data="shipments.filter(s => !query || s.shipment_no.includes(query))" class="shipment-table" @row-click="openShipment"><el-table-column prop="shipment_no" label="运单号" min-width="190"><template #default="{ row }"><span class="shipment-no">{{ row.shipment_no }}</span></template></el-table-column><el-table-column prop="status" label="状态"><template #default="{ row }"><el-tag :type="row.status === 'DELIVERED' ? 'success' : row.status === 'PENDING_PAYMENT' ? 'warning' : 'primary'" effect="light">{{ statusMap[row.status] || row.status }}</el-tag></template></el-table-column><el-table-column label="操作" width="100"><template #default="{ row }"><el-button text type="primary" @click.stop="openShipment(row)">查看 <ArrowRight /></el-button></template></el-table-column></el-table><el-pagination v-if="total > 20" v-model:current-page="page" layout="prev, pager, next" :total="total" @current-change="loadData" /></div>
+        <div v-if="view === 'shipments'" class="page-block"><div class="section-head"><div><p class="section-kicker">TRACKING OVERVIEW</p><h2>最近运单</h2></div><el-button type="primary" @click="view = 'create'"><Plus /> 新建寄件</el-button></div><div class="stat-strip"><div><small>全部运单</small><strong>{{ total }}</strong></div><div><small>运输中</small><strong>{{ shipments.filter(s => ['IN_LINEHAUL', 'OUT_FOR_DELIVERY'].includes(s.status)).length }}</strong></div><div><small>待支付</small><strong>{{ shipments.filter(s => s.status === 'PENDING_PAYMENT').length }}</strong></div></div><el-table :data="shipments.filter(s => !query || s.shipment_no.includes(query))" class="shipment-table" @row-click="openShipment"><el-table-column prop="shipment_no" label="运单号" min-width="190"><template #default="{ row }"><span class="shipment-no">{{ row.shipment_no }}</span></template></el-table-column><el-table-column prop="status" label="状态"><template #default="{ row }"><el-tag :type="row.status === 'DELIVERED' ? 'success' : row.status === 'PENDING_PAYMENT' ? 'warning' : row.status === 'CANCELLED' ? 'danger' : 'primary'" effect="light">{{ statusMap[row.status] || row.status }}</el-tag></template></el-table-column><el-table-column label="操作" width="100"><template #default="{ row }"><el-button text type="primary" @click.stop="openShipment(row)">查看 <ArrowRight /></el-button></template></el-table-column></el-table><el-pagination v-if="total > 20" v-model:current-page="page" layout="prev, pager, next" :total="total" @current-change="loadData" /></div>
         <div v-else-if="view === 'create'" class="page-block narrow"><div class="section-head"><div><p class="section-kicker">NEW SHIPMENT</p><h2>创建寄件</h2></div></div><el-card shadow="never" class="form-card"><el-form label-position="top"><el-form-item label="寄件地址"><el-select v-model="shipmentForm.sender_address_id" placeholder="选择寄件地址" filterable><el-option v-for="a in addresses" :key="a.id" :label="`${a.recipient_name} · ${a.detail}`" :value="a.id" /></el-select></el-form-item><el-form-item label="收件地址"><el-select v-model="shipmentForm.receiver_address_id" placeholder="选择收件地址" filterable><el-option v-for="a in addresses" :key="a.id" :label="`${a.recipient_name} · ${a.detail}`" :value="a.id" /></el-select></el-form-item><div class="form-grid"><el-form-item label="寄件方式"><el-radio-group v-model="shipmentForm.pickup_method"><el-radio-button value="DOOR_PICKUP">上门取件</el-radio-button><el-radio-button value="STATION_DROPOFF">网点寄件</el-radio-button></el-radio-group></el-form-item><el-form-item label="派送方式"><el-radio-group v-model="shipmentForm.delivery_method"><el-radio-button value="HOME_DELIVERY">送货上门</el-radio-button><el-radio-button value="STATION_PICKUP">网点自提</el-radio-button></el-radio-group></el-form-item></div><el-button type="primary" size="large" @click="submitShipment">创建运单 <ArrowRight /></el-button></el-form></el-card></div>
         <div v-else-if="view === 'agent'" class="agent-page"><aside class="chat-list"><div class="section-head"><div><p class="section-kicker">ASSISTANT</p><h2>智能寄件</h2></div><el-button circle type="primary" :icon="Plus" @click="openConversation()" /></div><button v-for="chat in conversations" :key="chat.id" :class="['chat-item', { active: activeConversation?.id === chat.id }]" @click="openConversation(chat)"><ChatDotRound /><span>{{ chat.title || '未命名会话' }}<small>{{ new Date(chat.updated_at).toLocaleDateString('zh-CN') }}</small></span></button><el-empty v-if="!conversations.length" description="开始一次智能寄件" /></aside><section class="chat-window"><div v-if="activeConversation" class="chat-body"><div class="chat-intro"><div class="agent-orb"><ChatDotRound /></div><h3>你好，我是 Yitu 寄件助手</h3><p>告诉我寄件和收件城市、物品重量，我会帮你准备运单草稿并计算报价。</p></div><div class="messages"><div v-for="message in agentMessages" :key="message.id" :class="['message', message.role]"><div class="message-bubble">{{ message.content }}</div></div></div><div class="chat-composer"><el-input v-model="agentInput" type="textarea" :rows="2" resize="none" placeholder="例如：帮我从广州寄一箱衣服到上海" @keydown.enter.exact.prevent="sendMessage" /><el-button type="primary" :loading="agentSending" :icon="ArrowRight" @click="sendMessage" /></div></div><div v-else class="chat-empty"><div class="agent-orb"><ChatDotRound /></div><h3>用对话完成寄件</h3><p>从地址、重量到报价确认，Yitu 助手会一步步帮你完成。</p><el-button type="primary" @click="openConversation()">开始新对话</el-button></div></section><aside class="draft-panel"><div class="section-kicker">SHIPMENT DRAFT</div><h3>运单草稿</h3><div v-if="agentDraft" class="draft-content"><el-tag :type="agentDraft.status === 'READY_FOR_CONFIRMATION' ? 'success' : 'warning'">{{ agentDraft.status === 'READY_FOR_CONFIRMATION' ? '待确认' : '信息补充中' }}</el-tag><dl><div v-for="(value, key) in agentDraft.payload" :key="key"><dt>{{ key }}</dt><dd>{{ value }}</dd></div></dl><el-button v-if="agentDraft.status !== 'READY_FOR_CONFIRMATION'" class="full-btn" @click="validateDraft">生成报价</el-button><el-button v-else type="primary" class="full-btn" @click="confirmAgentShipment">确认并创建运单</el-button></div><el-empty v-else description="对话后自动生成" /></aside></div>
         <div v-else-if="view === 'addresses'" class="page-block"><div class="section-head"><div><p class="section-kicker">ADDRESS BOOK</p><h2>地址簿</h2></div><el-button type="primary" @click="addressDialog = true"><Plus /> 新增地址</el-button></div><div class="address-grid"><el-card v-for="a in addresses" :key="a.id" shadow="never" class="address-card"><div class="address-label">{{ a.label || '常用地址' }}</div><strong>{{ a.recipient_name }} <span>{{ a.phone }}</span></strong><p>{{ a.detail }}</p><small>{{ a.district_code }}</small></el-card></div></div>
