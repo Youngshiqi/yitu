@@ -21,6 +21,7 @@ from yitu.shipments.schemas import (
 from yitu.shipments.service import (
     ShipmentApplicationService,
     ShipmentListResponse,
+    ShipmentReadView,
     ShipmentTransitionService,
     ShipmentView,
 )
@@ -79,16 +80,15 @@ async def confirm_payment(shipment_id: UUID, user: CurrentUser = _current_user, 
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.get("/{shipment_id}", response_model=ShipmentView)
-async def get_shipment(shipment_id: UUID, user: CurrentUser = _current_user, session: AsyncSession = _session) -> ShipmentView:
+@router.get("/{shipment_id}", response_model=ShipmentReadView)
+async def get_shipment(shipment_id: UUID, user: CurrentUser = _current_user, session: AsyncSession = _session) -> ShipmentReadView:
     """返回客户本人运单的当前状态。"""
     if user.role is not Role.CUSTOMER:
         raise AppError("FORBIDDEN_ROLE", "角色权限不足", 403)
-    shipment = await session.get(Shipment, shipment_id)
-    if shipment is None:
+    result = await ShipmentApplicationService(session).get_detail(shipment_id, user)
+    if result is None:
         raise AppError("SHIPMENT_NOT_FOUND", "运单不存在", 404)
-    require_resource_owner(shipment.owner_id, user)
-    return ShipmentView.model_validate(shipment)
+    return result
 
 
 @router.get("/{shipment_id}/tracking", response_model=list[TrackingEventView])

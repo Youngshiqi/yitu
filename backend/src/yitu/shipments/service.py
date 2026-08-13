@@ -1,11 +1,14 @@
 from datetime import datetime
+from typing import cast
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from yitu.addresses.models import Address
+from yitu.addresses.service import address_response
 from yitu.identity.models import Role
 from yitu.identity.service import CurrentUser, require_resource_owner
 from yitu.payments.models import PaymentTransaction
@@ -61,6 +64,10 @@ class ShipmentReadView(BaseModel):
     paid_total_cents: int
     eta_at: datetime | None
     promised_delivery_at: datetime | None
+    sender_address: dict[str, object] | None = None
+    receiver_address: dict[str, object] | None = None
+    package: dict[str, object] | None = None
+    quote: dict[str, object] | None = None
 
 
 class ShipmentApplicationService:
@@ -256,6 +263,18 @@ class ShipmentApplicationService:
             .order_by(SLAInstance.started_at.desc().nullslast(), SLAInstance.id.desc())
             .limit(1)
         )
+        sender = await self._session.scalar(
+            select(Address).where(Address.id == shipment.sender_address_id).options(
+                selectinload(Address.province_region), selectinload(Address.city_region), selectinload(Address.district_region)
+            )
+        ) if shipment.sender_address_id is not None else None
+        receiver = await self._session.scalar(
+            select(Address).where(Address.id == shipment.receiver_address_id).options(
+                selectinload(Address.province_region), selectinload(Address.city_region), selectinload(Address.district_region)
+            )
+        ) if shipment.receiver_address_id is not None else None
+        package = await self._session.get(ShipmentPackage, shipment.package_id) if shipment.package_id is not None else None
+        quote = await self._session.get(QuoteSnapshot, shipment.quote_id) if shipment.quote_id is not None else None
         tracking = await list_tracking_events(self._session, shipment.id)
         return ShipmentReadView(
             shipment=ShipmentView.model_validate(shipment),
@@ -265,7 +284,77 @@ class ShipmentApplicationService:
             promised_delivery_at=(
                 latest_sla.promised_delivery_at if latest_sla is not None else None
             ),
+            sender_address=address_response(sender) if sender is not None else None,
+            receiver_address=address_response(receiver) if receiver is not None else None,
+            package={
+                "category": package.category,
+                "description": package.description,
+                "estimated_weight_grams": package.estimated_weight_grams,
+                "estimated_length_cm": package.estimated_length_cm,
+                "estimated_width_cm": package.estimated_width_cm,
+                "estimated_height_cm": package.estimated_height_cm,
+                "declared_value_cents": package.declared_value_cents,
+                "special_instructions": package.special_instructions,
+                "actual_weight_grams": package.actual_weight_grams,
+                "actual_length_cm": package.actual_length_cm,
+                "actual_width_cm": package.actual_width_cm,
+                "actual_height_cm": package.actual_height_cm,
+            } if package is not None else None,
+            quote={
+                "id": quote.id,
+                "rule_version": quote.rule_version,
+                "fee_items": quote.fee_items,
+                "total_cents": quote.total_cents,
+                "billable_weight_grams": quote.billable_weight_grams,
+            } if quote is not None else None,
         )
+
+    async def get_detail(self, shipment_id: UUID, actor: CurrentUser) -> ShipmentReadView | None:
+        """返回客户详情页需要的运单、地址、包裹、报价和轨迹聚合。"""
+        if actor.role is not Role.CUSTOMER:
+            raise AppError("FORBIDDEN_ROLE", "角色权限不足", 403)
+        shipment = await self._session.scalar(
+            select(Shipment).where(Shipment.id == shipment_id, Shipment.owner_id == actor.id)
+        )
+        if shipment is None:
+            return None
+        return await self._build_detail(shipment)
+
+    async def _build_detail(self, shipment: Shipment) -> ShipmentReadView:
+        payment_amount = await self._session.scalar(
+            select(func.coalesce(func.sum(case((PaymentTransaction.transaction_type == "REFUND", -PaymentTransaction.amount_cents), else_=PaymentTransaction.amount_cents)), 0)).where(
+                PaymentTransaction.shipment_id == shipment.id, PaymentTransaction.status == "SUCCEEDED"
+            )
+        )
+        sender = await self._load_address(shipment.sender_address_id)
+        receiver = await self._load_address(shipment.receiver_address_id)
+        package = await self._session.get(ShipmentPackage, shipment.package_id) if shipment.package_id else None
+        quote = await self._session.get(QuoteSnapshot, shipment.quote_id) if shipment.quote_id else None
+        tracking = await list_tracking_events(self._session, shipment.id)
+        return ShipmentReadView(
+            shipment=ShipmentView.model_validate(shipment), tracking=[TrackingEventView.model_validate(item) for item in tracking],
+            paid_total_cents=int(payment_amount or 0), eta_at=None, promised_delivery_at=None,
+            sender_address=address_response(sender) if sender else None,
+            receiver_address=address_response(receiver) if receiver else None,
+            package=self._package_view(package), quote=self._quote_view(quote),
+        )
+
+    async def _load_address(self, address_id: UUID | None) -> Address | None:
+        if address_id is None:
+            return None
+        return cast(Address | None, await self._session.scalar(select(Address).where(Address.id == address_id).options(selectinload(Address.province_region), selectinload(Address.city_region), selectinload(Address.district_region))))
+
+    @staticmethod
+    def _package_view(package: ShipmentPackage | None) -> dict[str, object] | None:
+        if package is None:
+            return None
+        return {"category": package.category, "description": package.description, "estimated_weight_grams": package.estimated_weight_grams, "estimated_length_cm": package.estimated_length_cm, "estimated_width_cm": package.estimated_width_cm, "estimated_height_cm": package.estimated_height_cm, "declared_value_cents": package.declared_value_cents, "special_instructions": package.special_instructions, "actual_weight_grams": package.actual_weight_grams, "actual_length_cm": package.actual_length_cm, "actual_width_cm": package.actual_width_cm, "actual_height_cm": package.actual_height_cm}
+
+    @staticmethod
+    def _quote_view(quote: QuoteSnapshot | None) -> dict[str, object] | None:
+        if quote is None:
+            return None
+        return {"id": quote.id, "rule_version": quote.rule_version, "fee_items": quote.fee_items, "total_cents": quote.total_cents, "billable_weight_grams": quote.billable_weight_grams}
 
     async def reweigh(self, shipment_id: UUID, command: ReweighCommand, actor: CurrentUser) -> QuoteSnapshot:
         """锁定运单并保存复重事实，返回基于实际尺寸的新报价。"""
