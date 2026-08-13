@@ -48,7 +48,18 @@ export async function me() { return (await http.get('/auth/me')).data }
 // ---- 运单 ----
 export async function listShipments(params?: Record<string, unknown>) { return (await http.get('/shipments', { params })).data }
 export type ShipmentDetail = { shipment: Shipment; tracking: Array<{ id: string; message: string; occurred_at: string }>; paid_total_cents: number; eta_at?: string | null; promised_delivery_at?: string | null; sender_address?: Address; receiver_address?: Address; package?: { category: string; description: string; estimated_weight_grams: number; estimated_length_cm: number; estimated_width_cm: number; estimated_height_cm: number; declared_value_cents: number; special_instructions?: string | null; actual_weight_grams?: number | null; actual_length_cm?: number | null; actual_width_cm?: number | null; actual_height_cm?: number | null }; quote?: { id: string; rule_version: string; fee_items: Array<{ code: string; amount_cents: number }>; total_cents: number; billable_weight_grams: number } }
-export async function getShipment(id: string) { return (await http.get(`/shipments/${id}`)).data as ShipmentDetail }
+export async function getShipment(id: string): Promise<ShipmentDetail> {
+  const { data } = await http.get(`/shipments/${id}`)
+  // 兼容后端重启前的旧版扁平响应，避免详情页因缺少 shipment 节点崩溃。
+  if (data && typeof data === 'object' && data.shipment) return data as ShipmentDetail
+  return {
+    shipment: data as Shipment,
+    tracking: [],
+    paid_total_cents: 0,
+    eta_at: null,
+    promised_delivery_at: null,
+  }
+}
 export async function tracking(id: string) { return (await http.get(`/shipments/${id}/tracking`)).data }
 export async function createShipment(payload: { draft: ShipmentDraftInput; status: string }) { return (await http.post('/shipments', payload, { headers: { 'Idempotency-Key': crypto.randomUUID() } })).data }
 export async function getLabel(id: string) { return (await http.get(`/shipments/${id}/label`)).data }
