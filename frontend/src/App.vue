@@ -316,6 +316,11 @@ onBeforeUnmount(() => window.removeEventListener('yitu-auth-expired', handleAuth
 </template>
 
 <style scoped>
+/* 托寄物只填写自然语言内容，分类字段保留默认值供后端兼容。 */
+.shipment-section:nth-child(2) .form-grid .el-form-item:first-child {
+  display: none;
+}
+
 .chat-item span {
   flex: 1;
   min-width: 0;
