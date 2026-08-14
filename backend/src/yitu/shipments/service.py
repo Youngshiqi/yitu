@@ -9,6 +9,7 @@ from sqlalchemy.orm import selectinload
 
 from yitu.addresses.models import Address
 from yitu.addresses.service import address_response
+from yitu.dispatch.models import CourierTask
 from yitu.identity.models import Role
 from yitu.identity.service import CurrentUser, require_resource_owner
 from yitu.payments.models import PaymentTransaction
@@ -310,12 +311,36 @@ class ShipmentApplicationService:
         )
 
     async def get_detail(self, shipment_id: UUID, actor: CurrentUser) -> ShipmentReadView | None:
-        """返回客户详情页需要的运单、地址、包裹、报价和轨迹聚合。"""
-        if actor.role is not Role.CUSTOMER:
-            raise AppError("FORBIDDEN_ROLE", "角色权限不足", 403)
-        shipment = await self._session.scalar(
-            select(Shipment).where(Shipment.id == shipment_id, Shipment.owner_id == actor.id)
-        )
+        """杩斿洖瀹㈡埛璇︽儏椤甸渶瑕佺殑杩愬崟銆佸湴鍧€銆佸寘瑁广€佹姤浠峰拰杞ㄨ抗鑱氬悎銆?"""
+        # 瀹㈡埛鍙兘鏌ョ湅鑷繁鐨勮繍鍗曪紱缃戠偣鍛樼湅鏈綉鐐癸紱蹇€掑憳鍙兘鐪嬭嚜宸插凡鎺ュ崟鐨勫彇浠/娲鹃€佷换鍔★紱杩愯惀鍙湅鍏ㄩ儴銆?
+        if actor.role is Role.CUSTOMER:
+            statement = select(Shipment).where(
+                Shipment.id == shipment_id,
+                Shipment.owner_id == actor.id,
+            )
+        elif actor.role is Role.STATION_OPERATOR:
+            if actor.station_id is None:
+                raise AppError("FORBIDDEN_STATION_SCOPE", "缃戠偣鍛樼己灏戞墍灞炵綉鐐?", 403)
+            statement = select(Shipment).where(
+                Shipment.id == shipment_id,
+                (Shipment.origin_station_id == actor.station_id)
+                | (Shipment.destination_station_id == actor.station_id),
+            )
+        elif actor.role is Role.COURIER:
+            statement = select(Shipment).where(
+                Shipment.id == shipment_id,
+                Shipment.id.in_(
+                    select(CourierTask.shipment_id).where(
+                        CourierTask.shipment_id == shipment_id,
+                        CourierTask.assignee_id == actor.id,
+                    )
+                ),
+            )
+        elif actor.role is Role.OPERATIONS_ADMIN:
+            statement = select(Shipment).where(Shipment.id == shipment_id)
+        else:
+            raise AppError("FORBIDDEN_ROLE", "瑙掕壊鏉冮檺涓嶈冻", 403)
+        shipment = await self._session.scalar(statement)
         if shipment is None:
             return None
         return await self._build_detail(shipment)
@@ -451,3 +476,4 @@ class ShipmentTransitionService:
             request_id=request_id,
         )
         return event
+
