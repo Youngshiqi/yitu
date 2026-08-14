@@ -6,7 +6,7 @@ from httpx import ASGITransport, AsyncClient
 
 os.environ.setdefault(
     "YITU_DATABASE_URL",
-    "postgresql+asyncpg://yitu:yitu_test@127.0.0.1:55432/yitu_test",
+    "postgresql+asyncpg://yitu:yitu_local_dev_2026@127.0.0.1:55433/yitu",
 )
 
 from yitu.main import create_app

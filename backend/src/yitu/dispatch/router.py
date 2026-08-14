@@ -57,9 +57,9 @@ async def confirm_pickup_with_reweigh(
     task = await session.get(CourierTask, task_id)
     if task is None:
         raise AppError("TASK_NOT_FOUND", "任务不存在", 404)
-    if task.task_type is not CourierTaskType.PICKUP:
+    if CourierTaskType(task.task_type) is not CourierTaskType.PICKUP:
         raise AppError("TASK_TYPE_INVALID", "只有揽收任务可以复重", 409)
-    if user.role is not Role.COURIER or task.assignee_id != user.id or task.status is not CourierTaskStatus.ACCEPTED:
+    if user.role is not Role.COURIER or task.assignee_id != user.id or CourierTaskStatus(task.status) is not CourierTaskStatus.ACCEPTED:
         raise AppError("FORBIDDEN_TASK_OWNER", "只有已接单的任务负责人可以复重", 403)
     await ShipmentApplicationService(session).reweigh(task.shipment_id, payload, user)
     shipment = await session.get(Shipment, task.shipment_id)

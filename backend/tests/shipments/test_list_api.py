@@ -4,7 +4,8 @@ from uuid import UUID, uuid4
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from yitu.identity.models import Role, User
+from yitu.dispatch.models import CourierTask, CourierTaskStatus, CourierTaskType
+from yitu.identity.models import Role, Station, User
 from yitu.identity.security import create_access_token, hash_password
 from yitu.main import create_app
 from yitu.platform.database import SessionFactory, dispose_database
@@ -21,9 +22,9 @@ async def reset_database_pool() -> AsyncIterator[None]:
     await dispose_database()
 
 
-def _headers(user_id: object, role: Role) -> dict[str, str]:
+def _headers(user_id: object, role: Role, station_id: object | None = None) -> dict[str, str]:
     return {
-        "Authorization": f"Bearer {create_access_token(user_id, role.value, None)}",
+        "Authorization": f"Bearer {create_access_token(user_id, role.value, station_id)}",
     }
 
 
@@ -133,3 +134,95 @@ async def test_courier_cannot_list_shipments() -> None:
         )
     assert response.status_code == 403
     assert response.json()["code"] == "FORBIDDEN_ROLE"
+
+
+async def test_shipment_detail_is_visible_to_all_in_scope_roles() -> None:
+    station = Station(code=f"DETAIL-{uuid4().hex[:8]}", name="详情网点", district_code="310105")
+    destination_station = Station(code=f"DETAIL-DST-{uuid4().hex[:8]}", name="目的网点", district_code="310106")
+    owner = User(
+        login_name=f"shipments.owner.{uuid4()}",
+        display_name="运单客户",
+        password_hash=hash_password("password"),
+        role=Role.CUSTOMER,
+    )
+    operator = User(
+        login_name=f"shipments.operator.{uuid4()}",
+        display_name="网点管理员",
+        password_hash=hash_password("password"),
+        role=Role.STATION_OPERATOR,
+    )
+    destination_operator = User(
+        login_name=f"shipments.destination-operator.{uuid4()}",
+        display_name="目的网点管理员",
+        password_hash=hash_password("password"),
+        role=Role.STATION_OPERATOR,
+    )
+    pickup_courier = User(
+        login_name=f"shipments.pickup.{uuid4()}",
+        display_name="取件快递员",
+        password_hash=hash_password("password"),
+        role=Role.COURIER,
+    )
+    delivery_courier = User(
+        login_name=f"shipments.delivery.{uuid4()}",
+        display_name="派送快递员",
+        password_hash=hash_password("password"),
+        role=Role.COURIER,
+    )
+    operations = User(
+        login_name=f"shipments.operations.{uuid4()}",
+        display_name="运营人员",
+        password_hash=hash_password("password"),
+        role=Role.OPERATIONS_ADMIN,
+    )
+    async with SessionFactory() as session, session.begin():
+        session.add_all([station, destination_station])
+        await session.flush()
+        operator.station_id = station.id
+        destination_operator.station_id = destination_station.id
+        pickup_courier.station_id = station.id
+        delivery_courier.station_id = destination_station.id
+        session.add_all([owner, operator, destination_operator, pickup_courier, delivery_courier, operations])
+        await session.flush()
+        shipment = _shipment(owner.id, f"YT-DETAIL-{uuid4().hex[:8].upper()}", ShipmentStatus.PENDING_PAYMENT)
+        shipment.origin_station_id = station.id
+        shipment.destination_station_id = destination_station.id
+        session.add(shipment)
+        await session.flush()
+        shipment_id = shipment.id
+        session.add_all([
+            CourierTask(
+                shipment_id=shipment_id,
+                station_id=station.id,
+                task_type=CourierTaskType.PICKUP,
+                status=CourierTaskStatus.ACCEPTED,
+                assignee_id=pickup_courier.id,
+            ),
+            CourierTask(
+                shipment_id=shipment_id,
+                station_id=destination_station.id,
+                task_type=CourierTaskType.DELIVERY,
+                status=CourierTaskStatus.ACCEPTED,
+                assignee_id=delivery_courier.id,
+            ),
+        ])
+
+    async with AsyncClient(
+        transport=ASGITransport(app=create_app()),
+        base_url="http://test",
+    ) as client:
+        actors = [
+            (owner, Role.CUSTOMER, None),
+            (operator, Role.STATION_OPERATOR, station.id),
+            (destination_operator, Role.STATION_OPERATOR, destination_station.id),
+            (pickup_courier, Role.COURIER, station.id),
+            (delivery_courier, Role.COURIER, destination_station.id),
+            (operations, Role.OPERATIONS_ADMIN, None),
+        ]
+        for actor, role, station_id in actors:
+            response = await client.get(
+                f"/api/v1/shipments/{shipment_id}",
+                headers=_headers(actor.id, role, station_id),
+            )
+            assert response.status_code == 200, response.text
+            assert response.json()["shipment"]["id"] == str(shipment_id)

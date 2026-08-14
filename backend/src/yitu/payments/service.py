@@ -4,6 +4,7 @@ from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from yitu.dispatch.service import DispatchService
 from yitu.identity.models import Role
 from yitu.identity.service import CurrentUser, require_resource_owner
 from yitu.payments.models import PaymentTransaction
@@ -43,6 +44,13 @@ class PaymentService:
             self._session.add(transaction)
             target = ShipmentStatus.PENDING_PICKUP if PickupMethod(locked_shipment.pickup_method) is PickupMethod.DOOR_PICKUP else ShipmentStatus.WAITING_FOR_DROPOFF
             await ShipmentTransitionService(self._session).transition(locked_shipment, target, actor, "confirm_payment", f"payment:{locked_shipment.id}")
+            if PickupMethod(locked_shipment.pickup_method) is PickupMethod.DOOR_PICKUP:
+                if locked_shipment.origin_station_id is None:
+                    raise AppError("ORIGIN_STATION_REQUIRED", "运单缺少始发网点", 409)
+                await DispatchService(self._session).create_pickup_task(
+                    locked_shipment,
+                    locked_shipment.origin_station_id,
+                )
             await OutboxService(self._session).append(
                 event_type="notification.requested",
                 business_id=f"shipment:{locked_shipment.id}",
@@ -72,7 +80,7 @@ class PaymentService:
             self._session.add(transaction)
             if ShipmentStatus(shipment.status) is ShipmentStatus.AWAITING_SUPPLEMENT:
                 await ShipmentTransitionService(self._session).transition(
-                    shipment, ShipmentStatus.PICKED_UP, actor, "pay_supplement", f"supplement:{shipment.id}:{quote.id}"
+                    shipment, ShipmentStatus.PICKUP_ASSIGNED, actor, "pay_supplement", f"supplement:{shipment.id}:{quote.id}"
                 )
             await self._session.flush()
             return IdempotencyResponse(201, PaymentTransactionView.model_validate(transaction).model_dump(mode="json"))

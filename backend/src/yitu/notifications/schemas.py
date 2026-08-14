@@ -12,6 +12,7 @@ class NotificationView(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: UUID
     template_code: str
+    template_data: dict[str, object]
     title: str
     content: str
     status: str

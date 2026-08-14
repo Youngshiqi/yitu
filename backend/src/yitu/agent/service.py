@@ -301,7 +301,7 @@ class AgentConversationService:
                     KnowledgeSearchInput(query=understanding.knowledge_query or content),
                     ToolContext(actor=actor, session=self._session),
                 )
-                reply_parts.append(self._knowledge_reply(tool_result))
+                reply_parts.append(await model.complete(build_model_context([ModelMessage(role=item.role, content=item.content) for item in history], memories, [tool_result.model_dump_json()])) )
                 trace.record("tool.knowledge", found=tool_result.found)
             elif route == "read_tool":
                 tool_result = await ShipmentReadTool().execute(
@@ -311,7 +311,7 @@ class AgentConversationService:
                     ),
                     ToolContext(actor=actor, session=self._session),
                 )
-                reply_parts.append(self._shipment_reply(tool_result))
+                reply_parts.append(await model.complete(build_model_context([ModelMessage(role=item.role, content=item.content) for item in history], memories, [tool_result.model_dump_json()])))
                 trace.record("tool.shipment", found=tool_result.found)
             elif route == "draft":
                 reply_parts.append(

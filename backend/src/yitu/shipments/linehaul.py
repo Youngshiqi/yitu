@@ -44,9 +44,13 @@ class LinehaulService:
         return LinehaulResult(shipment_id=shipment.id, status=ShipmentStatus.IN_LINEHAUL)
 
     async def arrive_destination(self, shipment_id: UUID, actor: CurrentUser, request_id: str) -> LinehaulResult:
-        if actor.role is not Role.OPERATIONS_ADMIN:
+        if actor.role not in {Role.OPERATIONS_ADMIN, Role.STATION_OPERATOR}:
             raise AppError("FORBIDDEN_ROLE", "角色权限不足", 403)
         shipment = await ShipmentControlService(self._session).lock_and_assert_fulfillment_allowed(shipment_id)
+        if actor.role is Role.STATION_OPERATOR:
+            if shipment.destination_station_id is None:
+                raise AppError("DESTINATION_STATION_REQUIRED", "运单缺少目标网点", 409)
+            require_station_scope(shipment.destination_station_id, actor)
         leg = await self._session.scalar(select(TransportLeg).where(TransportLeg.shipment_id == shipment.id, TransportLeg.status == TransportLegStatus.IN_TRANSIT))
         if leg is None:
             raise AppError("INVALID_SHIPMENT_TRANSITION", "不允许在干线发车前确认到站", 409)

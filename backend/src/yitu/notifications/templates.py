@@ -12,9 +12,17 @@ class RenderedTemplate:
 
 
 _TEMPLATES: dict[str, RenderedTemplate] = {
+    "SHIPMENT_STATUS_UPDATED": RenderedTemplate(
+        title="运单状态更新",
+        content="运单 {shipment_no} 当前状态：{status}。",
+    ),
     "PAYMENT_SUCCESS": RenderedTemplate(
         title="支付成功",
         content="运单 {shipment_no} 已支付成功，等待揽收。",
+    ),
+    "SUPPLEMENT_REQUIRED": RenderedTemplate(
+        title="需要补缴运费",
+        content="运单 {shipment_no} 复重后需补缴 ¥{amount_yuan}，确认后将继续揽收。",
     ),
     "SHIPMENT_DELIVERED": RenderedTemplate(
         title="运单已送达",

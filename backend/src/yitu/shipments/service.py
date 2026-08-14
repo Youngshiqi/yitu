@@ -44,6 +44,7 @@ class ShipmentView(BaseModel):
     shipment_no: str
     owner_id: UUID
     status: ShipmentStatus
+    delivery_method: DeliveryMethod
     quote_id: UUID | None = None
     package_id: UUID | None = None
 
@@ -90,6 +91,17 @@ class ShipmentApplicationService:
             base_query = select(Shipment).where(Shipment.owner_id == actor.id)
             count_query = select(func.count()).select_from(Shipment).where(
                 Shipment.owner_id == actor.id
+            )
+        elif actor.role is Role.STATION_OPERATOR:
+            if actor.station_id is None:
+                raise AppError("FORBIDDEN_STATION_SCOPE", "station operator missing station scope", 403)
+            station_scope = (
+                (Shipment.origin_station_id == actor.station_id)
+                | (Shipment.destination_station_id == actor.station_id)
+            )
+            base_query = select(Shipment).where(station_scope)
+            count_query = select(func.count()).select_from(Shipment).where(
+                station_scope
             )
         elif actor.role is Role.OPERATIONS_ADMIN:
             base_query = select(Shipment)
@@ -426,8 +438,15 @@ class ShipmentApplicationService:
         difference = quote.total_cents - int(paid_total or 0)
         if difference > 0:
             shipment.status = ShipmentStatus.AWAITING_SUPPLEMENT
+            await OutboxService(self._session).append(
+                event_type="notification.requested", business_id=f"shipment:{shipment.id}",
+                payload={"recipient_id": str(shipment.owner_id), "template_code": "SUPPLEMENT_REQUIRED", "template_data": {"shipment_no": shipment.shipment_no, "shipment_id": str(shipment.id), "quote_id": str(quote.id), "amount_cents": difference, "amount_yuan": f"{difference / 100:.2f}"}},
+                idempotency_key=f"notification:{shipment.id}:supplement:{quote.id}",
+            )
         elif difference < 0:
             self._session.add(PaymentTransaction(owner_id=shipment.owner_id, quote_id=quote.id, shipment_id=shipment.id, transaction_type="REFUND", status="SUCCEEDED", amount_cents=-difference, idempotency_key=f"mock-reweigh-refund:{shipment.id}:{quote.id}", request_hash=canonical_json_sha256({"shipment_id": str(shipment.id), "quote_id": str(quote.id), "amount_cents": -difference}), created_at=Clock.now()))
+        elif ShipmentStatus(shipment.status) is ShipmentStatus.AWAITING_SUPPLEMENT:
+            shipment.status = ShipmentStatus.PICKUP_ASSIGNED
         shipment.quote_id = quote.id
         await self._session.flush()
         return quote
@@ -465,6 +484,16 @@ class ShipmentTransitionService:
             event_type=action,
             message=f"运单状态已更新为 {target.value}",
             idempotency_key=event_key,
+        )
+        await OutboxService(self._session).append(
+            event_type="notification.requested",
+            business_id=f"shipment:{shipment.id}",
+            payload={
+                "recipient_id": str(shipment.owner_id),
+                "template_code": "SHIPMENT_STATUS_UPDATED",
+                "template_data": {"shipment_no": shipment.shipment_no, "status": target.value},
+            },
+            idempotency_key=f"notification:{shipment.id}:status:{action}:{request_id}",
         )
         await AuditService(self._session).record(
             actor=str(actor.id),
