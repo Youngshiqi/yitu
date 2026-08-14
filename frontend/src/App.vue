@@ -88,6 +88,28 @@ const statusMap: Record<string, string> = {
   RETURNED_TO_ORIGIN_STATION: '已退回始发网点',
   RETURN_COMPLETED: '退回已完成',
 }
+const feeItemLabelMap: Record<string, string> = {
+  BASE_FEE: '基础运费',
+  ADDITIONAL_WEIGHT: '续重费用',
+  PICKUP_SERVICE: '上门取件',
+  STATION_PICKUP_DISCOUNT: '自提优惠',
+  INSURANCE: '保价服务',
+  REMOTE_SURCHARGE: '偏远附加费',
+}
+
+function renderTrackingMessage(message: string): string {
+  const prefix = '运单状态已更新为 '
+  if (message.startsWith(prefix)) {
+    const rawStatus = message.slice(prefix.length)
+    return `运单状态已更新为 ${statusMap[rawStatus] || rawStatus}`
+  }
+  return message
+}
+
+function feeItemLabel(code: string): string {
+  return feeItemLabelMap[code] || code
+}
+
 const nav = computed(() => [
   { id: 'shipments', label: '我的运单', icon: Box },
   { id: 'create', label: '我要寄件', icon: Plus },
@@ -308,7 +330,7 @@ onBeforeUnmount(() => window.removeEventListener('yitu-auth-expired', handleAuth
         </div>
         <div v-else-if="view === 'addresses'" class="page-block"><div class="section-head"><div><p class="section-kicker">ADDRESS BOOK</p><h2>地址簿</h2></div><el-button type="primary" @click="openAddressDialog"><Plus /> 新增地址</el-button></div><div class="address-grid"><el-card v-for="a in addresses" :key="a.id" shadow="never" class="address-card"><div class="address-card-head"><div class="address-label">{{ a.label || '常用地址' }}</div><div class="address-actions"><el-button text type="primary" :icon="Edit" @click="editAddress(a)">编辑</el-button><el-button text type="danger" :icon="Delete" @click="removeAddress(a)">删除</el-button></div></div><strong>{{ a.recipient_name }} <span>{{ a.phone }}</span></strong><p>{{ a.full_address }}</p><small>{{ a.province_name }} · {{ a.city_name }} · {{ a.district_name }}</small></el-card></div></div>
         <div v-else-if="view === 'notifications'" class="page-block"><div class="section-head"><div><p class="section-kicker">NOTIFICATIONS</p><h2>消息中心</h2></div></div><div class="notice-list"><div v-for="n in notifications" :key="n.id" :class="['notice', { unread: n.status !== 'READ' }]" @click="readNotice(n)"><div class="notice-dot"></div><div><strong>{{ n.title }}</strong><p>{{ n.content }}</p><time>{{ new Date(n.created_at).toLocaleString('zh-CN') }}</time></div></div><el-empty v-if="!notifications.length" description="暂无消息" /></div></div>
-        <div v-else class="page-block"><el-button text @click="view = 'shipments'">← 返回运单</el-button><div v-if="selected?.shipment" class="detail-layout"><div class="detail-main"><p class="section-kicker">SHIPMENT DETAIL</p><h2>{{ selected.shipment.shipment_no }}</h2><el-tag type="primary">{{ statusMap[selected.shipment.status] || selected.shipment.status }}</el-tag><div class="route-summary"><div><small>寄件信息</small><strong>{{ selected.sender_address?.recipient_name || '未提供' }}</strong><p>{{ selected.sender_address?.full_address || '暂无寄件地址' }}</p></div><ArrowRight /><div><small>收件信息</small><strong>{{ selected.receiver_address?.recipient_name || '未提供' }}</strong><p>{{ selected.receiver_address?.full_address || '暂无收件地址' }}</p></div></div><div v-if="selected.package" class="package-summary"><div><small>托寄物</small><strong>{{ selected.package.category }}</strong><p>{{ selected.package.description }}</p></div><div><small>预估重量</small><strong>{{ (selected.package.estimated_weight_grams / 1000).toFixed(2) }} kg</strong><p>{{ selected.package.estimated_length_cm }} × {{ selected.package.estimated_width_cm }} × {{ selected.package.estimated_height_cm }} cm</p></div><div><small>运费</small><strong>¥{{ ((selected.quote?.total_cents || 0) / 100).toFixed(2) }}</strong><p>{{ selected.shipment.status === 'PENDING_PAYMENT' ? '待支付' : `已支付 ¥${(selected.paid_total_cents / 100).toFixed(2)}` }}</p></div></div><div class="timeline"><div v-for="event in timeline" :key="event.id" class="timeline-item"><div class="timeline-dot"></div><div><strong>{{ event.message }}</strong><time>{{ new Date(event.occurred_at).toLocaleString('zh-CN') }}</time></div></div><el-empty v-if="!timeline.length" description="暂无轨迹" /></div></div><aside class="detail-side"><el-card shadow="never"><small>当前状态</small><h3>{{ statusMap[selected.shipment.status] || '处理中' }}</h3><p v-if="selected.eta_at">预计送达：{{ new Date(selected.eta_at).toLocaleString('zh-CN') }}</p></el-card></aside></div><el-empty v-else description="暂无运单详情" /></div>
+        <div v-else class="page-block"><el-button text @click="view = 'shipments'">← 返回运单</el-button><div v-if="selected?.shipment" class="detail-layout"><div class="detail-main"><p class="section-kicker">SHIPMENT DETAIL</p><h2>{{ selected.shipment.shipment_no }}</h2><el-tag type="primary">{{ statusMap[selected.shipment.status] || selected.shipment.status }}</el-tag><div class="route-summary"><div><small>寄件信息</small><strong>{{ selected.sender_address?.recipient_name || '未提供' }}</strong><p>{{ selected.sender_address?.full_address || '暂无寄件地址' }}</p></div><ArrowRight /><div><small>收件信息</small><strong>{{ selected.receiver_address?.recipient_name || '未提供' }}</strong><p>{{ selected.receiver_address?.full_address || '暂无收件地址' }}</p></div></div><div v-if="selected.package" class="package-summary"><div><small>托寄物</small><strong>{{ selected.package.category }}</strong><p>{{ selected.package.description }}</p></div><div><small>预估重量</small><strong>{{ (selected.package.estimated_weight_grams / 1000).toFixed(2) }} kg</strong><p>{{ selected.package.estimated_length_cm }} × {{ selected.package.estimated_width_cm }} × {{ selected.package.estimated_height_cm }} cm</p></div><div><small>运费</small><strong>¥{{ ((selected.quote?.total_cents || 0) / 100).toFixed(2) }}</strong><p>{{ selected.shipment.status === 'PENDING_PAYMENT' ? '待支付' : `已支付 ¥${(selected.paid_total_cents / 100).toFixed(2)}` }}</p><div v-if="selected.quote?.fee_items?.length" class="fee-breakdown"><span v-for="item in selected.quote.fee_items" :key="item.code">{{ feeItemLabel(item.code) }}：¥{{ (item.amount_cents / 100).toFixed(2) }}</span></div></div></div><div class="timeline"><div v-for="event in timeline" :key="event.id" class="timeline-item"><div class="timeline-dot"></div><div><strong>{{ renderTrackingMessage(event.message) }}</strong><time>{{ new Date(event.occurred_at).toLocaleString('zh-CN') }}</time></div></div><el-empty v-if="!timeline.length" description="暂无轨迹" /></div></div></div><el-empty v-else description="暂无运单详情" /></div>
       </section>
     </main>
     <el-dialog v-model="addressDialog" :title="editingAddressId ? '编辑地址' : '新增地址'" width="560px"><el-form label-position="top" v-loading="regionLoading"><div class="form-grid"><el-form-item label="标签"><el-input v-model="addressForm.label" placeholder="例如：家、公司" /></el-form-item><el-form-item label="联系人"><el-input v-model="addressForm.recipient_name" /></el-form-item></div><el-form-item label="手机号"><el-input v-model="addressForm.phone" /></el-form-item><div class="region-grid"><el-form-item label="省"><el-select v-model="addressForm.province_region_id" filterable placeholder="请选择省份" @change="changeProvince"><el-option v-for="item in provinces" :key="item.id" :label="item.name" :value="item.id" /></el-select></el-form-item><el-form-item label="市"><el-select v-model="addressForm.city_region_id" filterable placeholder="请选择城市" :disabled="!addressForm.province_region_id" @change="changeCity"><el-option v-for="item in cities" :key="item.id" :label="item.name" :value="item.id" /></el-select></el-form-item><el-form-item label="区 / 县"><el-select v-model="addressForm.district_region_id" filterable placeholder="请选择区县" :disabled="!addressForm.city_region_id"><el-option v-for="item in districts" :key="item.id" :label="item.name" :value="item.id" /></el-select></el-form-item></div><el-form-item label="详细地址"><el-input v-model="addressForm.detail" type="textarea" :rows="2" placeholder="街道、门牌号、小区及楼栋信息" /></el-form-item></el-form><template #footer><el-button @click="addressDialog = false">取消</el-button><el-button type="primary" @click="saveAddress">{{ editingAddressId ? '保存修改' : '保存地址' }}</el-button></template></el-dialog>
@@ -514,6 +536,15 @@ onBeforeUnmount(() => window.removeEventListener('yitu-auth-expired', handleAuth
 .route-summary strong, .package-summary strong { display: block; margin-top: 6px; color: #25332e; font-size: 15px; }
 .route-summary p, .package-summary p { margin: 5px 0 0; color: #64736b; font-size: 13px; line-height: 1.5; }
 .package-summary { grid-template-columns: repeat(3, 1fr); background: #e8eee9; }
+.detail-layout { display: block; width: 100%; margin-top: 18px; }
+.detail-main { max-width: 100%; }
+.fee-breakdown { display: grid; gap: 6px; margin-top: 12px; color: #4d5f56; font-size: 12px; line-height: 1.5; }
+.timeline { display: grid; gap: 14px; margin-top: 28px; }
+.timeline-item { display: grid; grid-template-columns: 14px 1fr; gap: 14px; align-items: start; padding: 14px 16px; border: 1px solid #dce3de; background: #f9faf8; }
+.timeline-item > div:last-child { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.timeline-dot { width: 10px; height: 10px; margin-top: 5px; border-radius: 50%; background: #b18c50; box-shadow: 0 0 0 4px #f2e8d8; }
+.timeline-item strong { color: #25332e; font-size: 14px; }
+.timeline-item time { color: #7d8c85; font-size: 12px; white-space: nowrap; }
 @media (max-width: 800px) {
   .shipment-section { padding: 24px 20px 18px; }
   .dimension-row { grid-template-columns: 1fr 14px 1fr 14px 1fr; }
