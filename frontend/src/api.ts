@@ -88,7 +88,7 @@ export async function createQuote(payload: {
   pickup_method: string; delivery_method: string
   actual_weight_grams: number; length_cm: number; width_cm: number; height_cm: number
   declared_value_cents?: number
-}) { return (await http.post('/pricing/quotes', payload)).data as Quote }
+}) { return (await http.post('/pricing/quotes', payload, { headers: { 'Idempotency-Key': crypto.randomUUID() } })).data as Quote }
 export async function getQuote(id: string) { return (await http.get(`/pricing/quotes/${id}`)).data as Quote }
 export async function payQuote(quoteId: string, payload: { shipment_id: string; amount_cents: number }) { return (await http.post(`/payments/quotes/${quoteId}/pay`, payload, { headers: { 'Idempotency-Key': crypto.randomUUID() } })).data }
 export async function confirmPayment(shipmentId: string) { return (await http.post(`/shipments/${shipmentId}/confirm-payment`)).data }

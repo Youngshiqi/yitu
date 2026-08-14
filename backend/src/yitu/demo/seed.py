@@ -5,6 +5,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from yitu.identity.models import Role, Station, User
 from yitu.identity.security import hash_password
+from yitu.platform.clock import Clock
+from yitu.pricing.models import PricingRule
 
 DEMO_PASSWORD = "YituDemo2026!"
 _DEMO_USERS = (
@@ -32,3 +34,32 @@ async def seed_demo_users(session: AsyncSession) -> list[User]:
     session.add_all([user for user in users if user not in session])
     await session.flush()
     return users
+
+
+async def seed_demo_pricing(session: AsyncSession) -> None:
+    """演示环境补齐基础报价规则，不覆盖管理员维护的已有规则。"""
+    defaults = (
+        ("40000000-0000-4000-8000-000000000001", "SAME_CITY", 800, 200),
+        ("40000000-0000-4000-8000-000000000002", "BJ_SH", 1500, 600),
+        ("40000000-0000-4000-8000-000000000003", "CROSS_REGION", 1200, 500),
+    )
+    existing = {
+        rule.route_code
+        for rule in (await session.scalars(select(PricingRule))).all()
+    }
+    session.add_all(
+        [
+            PricingRule(
+                id=UUID(rule_id),
+                version="pricing-demo-v1",
+                route_code=route,
+                base_fee_cents=base_fee,
+                additional_fee_cents=additional_fee,
+                remote_surcharge_cents=0,
+                effective_from=Clock.now(),
+            )
+            for rule_id, route, base_fee, additional_fee in defaults
+            if route not in existing
+        ]
+    )
+    await session.flush()

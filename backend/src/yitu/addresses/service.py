@@ -83,6 +83,7 @@ def address_response(address: Address) -> dict[str, object]:
         "city_name": city.name,
         "district_region_id": district.id,
         "district_name": district.name,
+        "district_code": address.district_code,
         "detail": address.detail,
         "full_address": "".join(names),
     }

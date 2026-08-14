@@ -1,5 +1,5 @@
 """报价 HTTP 入口。"""
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Header, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,9 +17,10 @@ _session = Depends(get_session)
 
 
 @router.post("/quotes", response_model=QuoteView, status_code=status.HTTP_201_CREATED)
-async def create_quote(request: QuoteRequest, idempotency_key: str = Header(alias="Idempotency-Key"), user: CurrentUser = _current_user, session: AsyncSession = _session) -> QuoteView:
+async def create_quote(request: QuoteRequest, idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"), user: CurrentUser = _current_user, session: AsyncSession = _session) -> QuoteView:
     """创建客户报价快照；幂等键由后续支付流程继续关联。"""
-    result = await PricingService(session).quote(request, user, idempotency_key)
+    # 兼容旧版客户端：未携带幂等键时由服务端生成一次性键，避免请求在参数校验阶段返回 422。
+    result = await PricingService(session).quote(request, user, idempotency_key or str(uuid4()))
     await session.commit()
     return result
 
