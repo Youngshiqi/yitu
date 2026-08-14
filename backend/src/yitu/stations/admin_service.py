@@ -189,7 +189,8 @@ async def _replace_service_areas(
     desired: dict[tuple[str, ServiceType], AdministrativeRegion] = {}
     for item in inputs:
         district = await _district(session, item.district_region_id)
-        for service_type in set(item.service_types):
+        # 服务区默认提供门到门服务，不再由运营员逐项选择服务类型。
+        for service_type in (ServiceType.HOME_PICKUP, ServiceType.HOME_DELIVERY):
             desired[(district.code, service_type)] = district
     if desired:
         conflicts = list(
@@ -236,7 +237,13 @@ async def create_station(session: AsyncSession, payload: StationCreate) -> Stati
     station = Station(code=payload.code, name=payload.name, district_code=district.code)
     session.add(station)
     await session.flush()
-    await _replace_service_areas(session, station, payload.service_areas)
+    service_areas = payload.service_areas or [
+        ServiceAreaInput(
+            district_region_id=payload.district_region_id,
+            service_types=[ServiceType.HOME_PICKUP, ServiceType.HOME_DELIVERY],
+        )
+    ]
+    await _replace_service_areas(session, station, service_areas)
     await session.flush()
     return await get_admin_station(session, station.id)
 
@@ -255,6 +262,20 @@ async def update_station(
         station.name = payload.name
     if payload.district_region_id is not None:
         station.district_code = (await _district(session, payload.district_region_id)).code
+        if payload.service_areas is None:
+            await _replace_service_areas(
+                session,
+                station,
+                [
+                    ServiceAreaInput(
+                        district_region_id=payload.district_region_id,
+                        service_types=[
+                            ServiceType.HOME_PICKUP,
+                            ServiceType.HOME_DELIVERY,
+                        ],
+                    )
+                ],
+            )
     if payload.service_areas is not None:
         await _replace_service_areas(session, station, payload.service_areas)
     station.updated_at = Clock.now()

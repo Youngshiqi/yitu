@@ -7,6 +7,7 @@ from yitu.identity.models import Role, Station, User
 from yitu.identity.security import hash_password
 from yitu.platform.clock import Clock
 from yitu.pricing.models import PricingRule
+from yitu.stations.models import ServiceArea
 
 DEMO_PASSWORD = "YituDemo2026!"
 _DEMO_USERS = (
@@ -60,6 +61,32 @@ async def seed_demo_pricing(session: AsyncSession) -> None:
             )
             for rule_id, route, base_fee, additional_fee in defaults
             if route not in existing
+        ]
+    )
+    await session.flush()
+
+
+async def seed_demo_service_areas(session: AsyncSession) -> None:
+    """为演示网点补齐门到门服务区域，不覆盖运营员已经维护的映射。"""
+    demo_codes = {"BJS-001", "SHS-001", "GZS-001", "SZS-001"}
+    stations = (
+        await session.scalars(select(Station).where(Station.code.in_(demo_codes)))
+    ).all()
+    existing = {
+        (area.district_code, area.service_type)
+        for area in (await session.scalars(select(ServiceArea))).all()
+    }
+    session.add_all(
+        [
+            ServiceArea(
+                district_code=station.district_code,
+                service_type=service_type,
+                station_id=station.id,
+                version=1,
+            )
+            for station in stations
+            for service_type in ("HOME_PICKUP", "HOME_DELIVERY")
+            if (station.district_code, service_type) not in existing
         ]
     )
     await session.flush()

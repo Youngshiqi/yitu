@@ -45,11 +45,16 @@ class ReadinessResponse(BaseModel):
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """在演示环境准备固定身份，并在退出前释放异步数据库连接。"""
     if get_settings().app_profile == "demo":
-        from yitu.demo.seed import seed_demo_pricing, seed_demo_users
+        from yitu.demo.seed import (
+            seed_demo_pricing,
+            seed_demo_service_areas,
+            seed_demo_users,
+        )
 
         async with SessionFactory() as session, session.begin():
             await seed_demo_users(session)
             await seed_demo_pricing(session)
+            await seed_demo_service_areas(session)
     try:
         yield
     finally:
