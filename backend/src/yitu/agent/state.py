@@ -8,6 +8,8 @@ AgentIntent = Literal[
     "SHIPMENT_QUERY",
     "DRAFT_UPDATE",
     "SENSITIVE_ACTION",
+    "ADDRESS_QUERY",
+    "IDENTITY_QUERY",
 ]
 AgentRisk = Literal["LOW", "PERSONAL_DATA", "WRITE_ACTION", "BLOCKED"]
 AgentRoute = Literal[
@@ -17,6 +19,8 @@ AgentRoute = Literal[
     "draft",
     "confirmation",
     "blocked",
+    "address_tool",
+    "identity_tool",
 ]
 
 

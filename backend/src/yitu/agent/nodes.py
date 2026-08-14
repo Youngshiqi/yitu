@@ -62,6 +62,8 @@ def classify_intent_node(state: AgentState) -> AgentState:
         "SHIPMENT_QUERY": ("PERSONAL_DATA", "read_tool"),
         "DRAFT_UPDATE": ("WRITE_ACTION", "draft"),
         "SENSITIVE_ACTION": ("WRITE_ACTION", "confirmation"),
+        "ADDRESS_QUERY": ("PERSONAL_DATA", "address_tool"),
+        "IDENTITY_QUERY": ("PERSONAL_DATA", "identity_tool"),
     }
     risk, route = routes.get(intent, ("BLOCKED", "blocked"))
     return _classification(intent, risk, route)
@@ -88,6 +90,30 @@ def read_tool_node(state: AgentState) -> AgentState:
         "next_action": "QUERY_OWN_SHIPMENT",
         "tool_call_count": state.get("tool_call_count", 0) + 1,
         "response": "好的，我来帮你查询当前账号下的运单信息。",
+    }
+
+
+def address_tool_node(state: AgentState) -> AgentState:
+    """为本人地址簿查询工具产出动作，身份范围来自后端状态。"""
+    refusal = _tool_budget_refusal(state)
+    if refusal is not None:
+        return _blocked_update(refusal)
+    return {
+        "next_action": "QUERY_OWN_ADDRESSES",
+        "tool_call_count": state.get("tool_call_count", 0) + 1,
+        "response": "好的，我来帮你查看当前账号下的地址簿。",
+    }
+
+
+def identity_tool_node(state: AgentState) -> AgentState:
+    """为本人身份查询工具产出动作，身份范围来自后端状态。"""
+    refusal = _tool_budget_refusal(state)
+    if refusal is not None:
+        return _blocked_update(refusal)
+    return {
+        "next_action": "QUERY_OWN_IDENTITY",
+        "tool_call_count": state.get("tool_call_count", 0) + 1,
+        "response": "好的，我来帮你查看当前账号信息。",
     }
 
 
@@ -137,6 +163,8 @@ def route_after_classification(state: AgentState) -> AgentRoute:
         "draft",
         "confirmation",
         "blocked",
+        "address_tool",
+        "identity_tool",
     }:
         return route
     return "blocked"

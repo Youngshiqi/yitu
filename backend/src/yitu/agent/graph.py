@@ -4,10 +4,12 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
 from yitu.agent.nodes import (
+    address_tool_node,
     blocked_node,
     classify_intent_node,
     confirmation_node,
     draft_node,
+    identity_tool_node,
     knowledge_node,
     load_context_node,
     read_tool_node,
@@ -24,6 +26,8 @@ def build_agent_graph() -> CompiledStateGraph[AgentState, None, AgentState, Agen
     graph.add_node("classify_intent", classify_intent_node)
     graph.add_node("knowledge", knowledge_node)
     graph.add_node("read_tool", read_tool_node)
+    graph.add_node("address_tool", address_tool_node)
+    graph.add_node("identity_tool", identity_tool_node)
     graph.add_node("draft", draft_node)
     graph.add_node("confirmation", confirmation_node)
     graph.add_node("respond", response_node)
@@ -37,6 +41,8 @@ def build_agent_graph() -> CompiledStateGraph[AgentState, None, AgentState, Agen
         {
             "knowledge": "knowledge",
             "read_tool": "read_tool",
+            "address_tool": "address_tool",
+            "identity_tool": "identity_tool",
             "draft": "draft",
             "confirmation": "confirmation",
             "respond": "respond",
@@ -46,6 +52,8 @@ def build_agent_graph() -> CompiledStateGraph[AgentState, None, AgentState, Agen
     for terminal_node in (
         "knowledge",
         "read_tool",
+        "address_tool",
+        "identity_tool",
         "draft",
         "confirmation",
         "respond",

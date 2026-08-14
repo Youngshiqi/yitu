@@ -17,6 +17,8 @@ IntentName = Literal[
     "SHIPMENT_QUERY",
     "DRAFT_UPDATE",
     "SENSITIVE_ACTION",
+    "ADDRESS_QUERY",
+    "IDENTITY_QUERY",
 ]
 
 CONFIDENCE_THRESHOLD = 0.6
@@ -131,6 +133,19 @@ _FAST_PATH_RULES = (
             re.compile(r"(?:就按|按这个).{0,6}(?:下单|创建|支付)"),
         ),
     ),
+    FastPathRule(
+        "ADDRESS_QUERY",
+        (
+            re.compile(r"(?:我的|我|看看|查看|有哪些|常用).{0,6}地址"),
+            re.compile(r"地址簿"),
+        ),
+    ),
+    FastPathRule(
+        "IDENTITY_QUERY",
+        (
+            re.compile(r"我是谁|我的(?:账号|身份|角色|网点|信息|资料)"),
+        ),
+    ),
 )
 
 
@@ -203,12 +218,14 @@ def _unique_label(value: str, address_labels: list[str]) -> str | None:
 
 
 UNDERSTANDING_PROMPT = """你是 Yitu 物流的意图识别器。调用 classify_logistics_intent 函数返回结果，不直接回答用户。
-可选意图只有 GENERAL_CHAT、KNOWLEDGE_QUERY、SHIPMENT_QUERY、DRAFT_UPDATE、SENSITIVE_ACTION。
+可选意图只有 GENERAL_CHAT、KNOWLEDGE_QUERY、SHIPMENT_QUERY、DRAFT_UPDATE、SENSITIVE_ACTION、ADDRESS_QUERY、IDENTITY_QUERY。
 支持口语、同义表达、省略和多意图；primary_intent 表示当前最应该先处理的意图。
 创建运单、确认下单、支付、退款、取消或其他改变业务状态的请求属于 SENSITIVE_ACTION，requires_confirmation 必须为 true。
 物流规则、禁限寄、包装、赔付、保价和时效政策属于 KNOWLEDGE_QUERY。
 本人运单状态、轨迹、费用或预计到达属于 SHIPMENT_QUERY。
 提供或修改寄件地址、收件地址、重量、尺寸、声明价值属于 DRAFT_UPDATE。
+查询本人地址簿、常用地址或有哪些地址属于 ADDRESS_QUERY。
+查询当前账号身份、角色或所属网点属于 IDENTITY_QUERY。
 地址只能原样提取为地址标签，禁止生成数据库 ID。重量换算为克，金额换算为分；未明确提供的字段必须为 null。
 当前仅支持上门取件和送货上门，不提取网点寄件或网点自提字段。
 不确定时降低 confidence 并给出一个具体 clarification_question。
@@ -220,6 +237,10 @@ UNDERSTANDING_PROMPT = """你是 Yitu 物流的意图识别器。调用 classify
 结果：primary_intent=KNOWLEDGE_QUERY, confidence=0.94, knowledge_query=电脑寄件包装要求
 用户：从公司寄到家，2.5公斤，箱子30乘20乘15
 结果：primary_intent=DRAFT_UPDATE, confidence=0.97, draft.sender_address_label=公司, draft.receiver_address_label=家, draft.actual_weight_grams=2500
+用户：我有哪些地址可以寄
+结果：primary_intent=ADDRESS_QUERY, confidence=0.95
+用户：我的账号是什么角色
+结果：primary_intent=IDENTITY_QUERY, confidence=0.93
 用户：帮我弄一下
 结果：primary_intent=GENERAL_CHAT, confidence=0.3, clarification_question=你想查询运单、了解寄件规则，还是准备新的寄件信息？
 """

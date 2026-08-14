@@ -20,6 +20,7 @@ from yitu.agent.nodes import security_refusal
 from yitu.agent.schemas import AgentTurnView, MessageView
 from yitu.agent.state import AgentState
 from yitu.agent.tools.base import ToolContext, ToolResult
+from yitu.agent.tools.identity import AddressBookTool, IdentityTool
 from yitu.agent.tools.knowledge import KnowledgeSearchInput, KnowledgeSearchTool
 from yitu.agent.tools.shipments import ShipmentReadInput, ShipmentReadTool
 from yitu.agent.tracing import AgentTrace
@@ -97,144 +98,40 @@ class AgentConversationService:
         content: str,
         model: ModelAdapter,
     ) -> AgentTurnView:
-        conversation = await self.get_owned(conversation_id, actor)
-        trace = AgentTrace()
-        trace.record("message.received", role="user")
-        now = Clock.now()
-        user_message = AgentMessage(
-            conversation_id=conversation.id,
-            role="user",
-            content=content,
-            envelope=None,
-            created_at=now,
-        )
-        self._session.add(user_message)
-        if not conversation.title:
-            conversation.title = _conversation_title(content)
-        conversation.updated_at = now
-        await self._session.commit()
-
-        history = await self._load_messages(conversation.id)
-        memories = await self._load_memories(actor.id)
-        refusal = security_refusal(preprocess_text(content).normalized)
-        if refusal is not None:
-            understanding = UnderstandingResult(
-                intents=[refusal[0]],
-                primary_intent=refusal[0],
-                confidence=1.0,
-                draft=DraftCandidate(),
+        """非流式单轮：收集共享编排产出的事件，组装为一次完整往返。"""
+        user_view: MessageView | None = None
+        assistant_view: MessageView | None = None
+        async for event, payload in self._run_turn(
+            conversation_id, actor, content, model
+        ):
+            if event == "user_message":
+                user_view = MessageView.model_validate(payload)
+            elif event == "done":
+                assistant_view = MessageView.model_validate(payload)
+        if user_view is None or assistant_view is None:
+            raise AppError(
+                code="AGENT_TURN_INCOMPLETE",
+                message="Agent 未产生完整往返结果",
+                status_code=500,
             )
-            addresses: list[Address] = []
-        else:
-            try:
-                understanding, addresses = await self._understand(
-                    model, history, content, actor
-                )
-            except ModelUnavailableError as error:
-                conversation.status = "WAITING_RETRY"
-                conversation.updated_at = Clock.now()
-                await self._session.commit()
-                raise AppError(
-                    code="AGENT_MODEL_UNAVAILABLE",
-                    message="AI 理解服务暂时不可用，会话消息已保存，请稍后重试",
-                    status_code=503,
-                ) from error
-        graph_result = await build_agent_graph().ainvoke(
-            self._initial_graph_state(
-                conversation.id, actor, content, history, understanding
-            )
-        )
-        trace.record(
-            "graph.routed",
-            route=graph_result.get("route"),
-            intent=graph_result.get("intent"),
-            risk=graph_result.get("risk"),
-        )
-        tool_result: ToolResult[BaseModel] | None = None
-        route = graph_result.get("route")
-        if route == "knowledge":
-            tool_result = await KnowledgeSearchTool().execute(
-                KnowledgeSearchInput(query=understanding.knowledge_query or content),
-                ToolContext(actor=actor, session=self._session),
-            )
-            reply = self._knowledge_reply(tool_result)
-            trace.record("tool.knowledge", found=tool_result.found)
-        elif route == "read_tool":
-            tool_result = await ShipmentReadTool().execute(
-                ShipmentReadInput(
-                    shipment_no=understanding.shipment_no
-                    or _extract_shipment_no(content)
-                ),
-                ToolContext(actor=actor, session=self._session),
-            )
-            reply = self._shipment_reply(tool_result)
-            trace.record("tool.shipment", found=tool_result.found)
-        elif route == "draft":
-            reply = await self._update_draft_from_understanding(
-                conversation.id, actor, understanding, addresses
-            )
-            trace.record("draft.updated")
-        elif route == "respond" and understanding.clarification_question:
-            reply = understanding.clarification_question
-            trace.record("understanding.clarification")
-        elif route == "respond":
-            try:
-                reply = await model.complete(build_model_context(
-                    [ModelMessage(role=item.role, content=item.content) for item in history],
-                    memories,
-                ))
-                trace.record("model.completed")
-            except ModelUnavailableError as error:
-                # 用户消息已单独提交，服务恢复后可以从同一会话继续重试。
-                conversation.status = "WAITING_RETRY"
-                conversation.updated_at = Clock.now()
-                await self._session.commit()
-                raise AppError(
-                    code="AGENT_MODEL_UNAVAILABLE",
-                    message="AI 服务暂时不可用，会话消息已保存，请稍后重试",
-                    status_code=503,
-                ) from error
-        else:
-            # 未接入的工具分支只返回图生成的安全动作，不让模型伪造业务结果。
-            reply = graph_result.get("response", "请求已进入受控处理流程。")
-
-        assistant_message = AgentMessage(
-            conversation_id=conversation.id,
-            role="assistant",
-            content=reply,
-            envelope={
-                "trace_id": str(trace.trace_id),
-                "intent": graph_result.get("intent"),
-                "intents": understanding.intents,
-                "confidence": understanding.confidence,
-                "recognition_path": understanding.recognition_path,
-                "risk": graph_result.get("risk"),
-                "route": route,
-                "next_action": graph_result.get("next_action"),
-                "tool_result": tool_result.model_dump(mode="json")
-                if tool_result is not None
-                else None,
-                "trace": trace.summary(),
-            },
-            created_at=Clock.now(),
-        )
-        self._session.add(assistant_message)
-        conversation.status = "ACTIVE"
-        conversation.updated_at = assistant_message.created_at
-        await self._session.commit()
         return AgentTurnView(
-            user_message=MessageView.model_validate(user_message),
-            assistant_message=MessageView.model_validate(assistant_message),
+            user_message=user_view,
+            assistant_message=assistant_view,
         )
 
-    async def stream_message(
+    async def _run_turn(
         self,
         conversation_id: UUID,
         actor: CurrentUser,
         content: str,
         model: ModelAdapter,
     ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
-        """持久化用户输入并增量输出助手回复，完成后再保存完整助手消息。"""
+        """共享单轮编排：保存用户消息、理解、路由、执行工具、生成并保存回复。
+
+        产出 (event, payload) 序列（user_message / delta / done），供非流式收集或
+        流式转发；错误通过 AppError 抛出，由端点层决定呈现为 HTTP 错误码还是 SSE
+        error 事件。
+        """
         conversation = await self.get_owned(conversation_id, actor)
         trace = AgentTrace()
         trace.record("message.received", role="user")
@@ -272,15 +169,15 @@ class AgentConversationService:
                 understanding, addresses = await self._understand(
                     model, history, content, actor
                 )
-            except ModelUnavailableError:
+            except ModelUnavailableError as error:
                 conversation.status = "WAITING_RETRY"
                 conversation.updated_at = Clock.now()
                 await self._session.commit()
-                yield "error", {
-                    "code": "AGENT_MODEL_UNAVAILABLE",
-                    "message": "AI 理解服务暂时不可用，会话消息已保存，请稍后重试",
-                }
-                return
+                raise AppError(
+                    code="AGENT_MODEL_UNAVAILABLE",
+                    message="AI 理解服务暂时不可用，会话消息已保存，请稍后重试",
+                    status_code=503,
+                ) from error
         graph_result = await build_agent_graph().ainvoke(
             self._initial_graph_state(
                 conversation.id, actor, content, history, understanding
@@ -292,16 +189,26 @@ class AgentConversationService:
             intent=graph_result.get("intent"),
             risk=graph_result.get("risk"),
         )
-        tool_result: ToolResult[BaseModel] | None = None
+
         route = graph_result.get("route")
+        tool_result: ToolResult[BaseModel] | None = None
+        history_messages = [
+            ModelMessage(role=item.role, content=item.content) for item in history
+        ]
         reply_parts: list[str] = []
         try:
             if route == "knowledge":
                 tool_result = await KnowledgeSearchTool().execute(
-                    KnowledgeSearchInput(query=understanding.knowledge_query or content),
+                    KnowledgeSearchInput(
+                        query=understanding.knowledge_query or content
+                    ),
                     ToolContext(actor=actor, session=self._session),
                 )
-                reply_parts.append(await model.complete(build_model_context([ModelMessage(role=item.role, content=item.content) for item in history], memories, [tool_result.model_dump_json()])) )
+                reply_parts.append(
+                    await self._tool_reply(
+                        model, history_messages, memories, tool_result
+                    )
+                )
                 trace.record("tool.knowledge", found=tool_result.found)
             elif route == "read_tool":
                 tool_result = await ShipmentReadTool().execute(
@@ -311,8 +218,32 @@ class AgentConversationService:
                     ),
                     ToolContext(actor=actor, session=self._session),
                 )
-                reply_parts.append(await model.complete(build_model_context([ModelMessage(role=item.role, content=item.content) for item in history], memories, [tool_result.model_dump_json()])))
+                reply_parts.append(
+                    await self._tool_reply(
+                        model, history_messages, memories, tool_result
+                    )
+                )
                 trace.record("tool.shipment", found=tool_result.found)
+            elif route == "address_tool":
+                tool_result = await AddressBookTool().execute(
+                    ToolContext(actor=actor, session=self._session)
+                )
+                reply_parts.append(
+                    await self._tool_reply(
+                        model, history_messages, memories, tool_result
+                    )
+                )
+                trace.record("tool.addresses", found=tool_result.found)
+            elif route == "identity_tool":
+                tool_result = await IdentityTool().execute(
+                    ToolContext(actor=actor, session=self._session)
+                )
+                reply_parts.append(
+                    await self._tool_reply(
+                        model, history_messages, memories, tool_result
+                    )
+                )
+                trace.record("tool.identity", found=tool_result.found)
             elif route == "draft":
                 reply_parts.append(
                     await self._update_draft_from_understanding(
@@ -324,19 +255,14 @@ class AgentConversationService:
                 reply_parts.append(understanding.clarification_question)
                 trace.record("understanding.clarification")
             elif route == "respond":
-                context = build_model_context(
-                    [
-                        ModelMessage(role=item.role, content=item.content)
-                        for item in history
-                    ],
-                    memories,
-                )
+                context = build_model_context(history_messages, memories)
                 async for chunk in model.stream(context):
                     if chunk:
                         reply_parts.append(chunk)
-                        yield "delta", {"content": chunk}
+                        yield ("delta", {"content": chunk})
                 trace.record("model.stream_completed")
             else:
+                # 未接入的工具分支只返回图生成的安全动作，不让模型伪造业务结果。
                 reply_parts.append(
                     graph_result.get("response", "请求已进入受控处理流程。")
                 )
@@ -344,24 +270,24 @@ class AgentConversationService:
             conversation.status = "WAITING_RETRY"
             conversation.updated_at = Clock.now()
             await self._session.commit()
-            yield "error", {
-                "code": "AGENT_MODEL_UNAVAILABLE",
-                "message": "AI 服务暂时不可用，会话消息已保存，请稍后重试",
-            }
-            return
+            raise AppError(
+                code="AGENT_MODEL_UNAVAILABLE",
+                message="AI 服务暂时不可用，会话消息已保存，请稍后重试",
+                status_code=503,
+            )
 
         if route != "respond":
-            yield "delta", {"content": "".join(reply_parts)}
+            yield ("delta", {"content": "".join(reply_parts)})
         reply = "".join(reply_parts)
         if not reply:
             conversation.status = "WAITING_RETRY"
             conversation.updated_at = Clock.now()
             await self._session.commit()
-            yield "error", {
-                "code": "AGENT_EMPTY_RESPONSE",
-                "message": "AI 未返回有效内容，请稍后重试",
-            }
-            return
+            raise AppError(
+                code="AGENT_EMPTY_RESPONSE",
+                message="AI 未返回有效内容，请稍后重试",
+                status_code=503,
+            )
 
         assistant_message = AgentMessage(
             conversation_id=conversation.id,
@@ -392,19 +318,34 @@ class AgentConversationService:
             MessageView.model_validate(assistant_message).model_dump(mode="json"),
         )
 
-    @staticmethod
-    def _knowledge_reply(result: ToolResult[BaseModel]) -> str:
-        """将 RAG 结果转为谨慎摘要，完整证据保留在结构化信封。"""
-        if not result.found:
-            return "暂时没有找到足够的已发布资料，我还不能确认这条规则。你可以换一种说法，我再帮你查查。"
-        return "找到了相关的已发布物流资料，你可以结合消息中的引用查看原文。"
+    async def _tool_reply(
+        self,
+        model: ModelAdapter,
+        history: list[ModelMessage],
+        memories: list[str],
+        tool_result: ToolResult[BaseModel],
+    ) -> str:
+        """把工具结果回喂模型，生成自然语言回复。"""
+        return await model.complete(
+            build_model_context(history, memories, [tool_result.model_dump_json()])
+        )
 
-    @staticmethod
-    def _shipment_reply(result: ToolResult[BaseModel]) -> str:
-        """将本人运单工具结果转为不泄漏额外个人信息的摘要。"""
-        if not result.found:
-            return "暂时没有找到当前账号可以查看的运单。你可以检查一下运单号，我再帮你查。"
-        return "查到了，我已经读取这张运单的轨迹、费用和预计到达信息。"
+    async def stream_message(
+        self,
+        conversation_id: UUID,
+        actor: CurrentUser,
+        content: str,
+        model: ModelAdapter,
+    ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
+        """流式单轮：转发共享编排事件，错误折叠为 SSE error 事件。"""
+        await self.get_owned(conversation_id, actor)
+        try:
+            async for event, payload in self._run_turn(
+                conversation_id, actor, content, model
+            ):
+                yield (event, payload)
+        except AppError as error:
+            yield ("error", {"code": error.code, "message": error.message})
 
     @staticmethod
     def _initial_graph_state(
