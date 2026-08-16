@@ -37,3 +37,13 @@ class KnowledgeReviewRequest(BaseModel):
     category: str | None = None
     effective_from: datetime | None = None
     effective_to: datetime | None = None
+
+
+class KnowledgeDocumentContentView(BaseModel):
+    """文档解析正文，供运营管理员在网页上预览。"""
+
+    document_id: UUID
+    filename: str
+    status: DocumentStatus
+    content: str
+    page_count: int | None

@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, Query, UploadFile
+from fastapi import APIRouter, Depends, File, Query, Response, UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,7 +12,11 @@ from yitu.knowledge.lifecycle import change_document_status
 from yitu.knowledge.models import DocumentStatus, KnowledgeDocument
 from yitu.knowledge.retrieval import KnowledgeRetriever
 from yitu.knowledge.retrieval_schemas import EvidenceView, KnowledgeSearchResponse
-from yitu.knowledge.schemas import KnowledgeDocumentView, KnowledgeReviewRequest
+from yitu.knowledge.schemas import (
+    KnowledgeDocumentContentView,
+    KnowledgeDocumentView,
+    KnowledgeReviewRequest,
+)
 from yitu.knowledge.service import get_document, upload_document
 from yitu.platform.config import get_settings
 from yitu.platform.database import get_session
@@ -125,3 +129,32 @@ async def search_knowledge(
 ) -> KnowledgeSearchResponse:
     items = await KnowledgeRetriever(session).search(query, category=category, limit=limit)
     return KnowledgeSearchResponse(items=[EvidenceView.model_validate(item) for item in items])
+
+
+@router.get("/documents/{document_id}/content", response_model=KnowledgeDocumentContentView)
+async def knowledge_document_content(
+    document_id: UUID,
+    _user: CurrentUser = _admins,
+    session: AsyncSession = _session,
+) -> KnowledgeDocumentContentView:
+    """返回解析后的 Markdown 正文，供运营管理员预览。"""
+    document = await get_document(session, document_id)
+    return KnowledgeDocumentContentView(
+        document_id=document.id,
+        filename=document.filename,
+        status=document.status,
+        content=document.parsed_text or "",
+        page_count=document.page_count,
+    )
+
+
+@router.get("/documents/{document_id}/file")
+async def knowledge_document_file(
+    document_id: UUID,
+    _user: CurrentUser = _admins,
+    session: AsyncSession = _session,
+) -> Response:
+    """返回上传的原始 PDF 字节流，解析完成前用于回退预览。"""
+    document = await get_document(session, document_id)
+    data = get_blob_store().open(document.object_key).read()
+    return Response(content=data, media_type="application/pdf")
