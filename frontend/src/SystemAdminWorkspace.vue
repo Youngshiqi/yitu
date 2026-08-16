@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { CircleCheck, Connection, DataBoard, Document, Files, FolderOpened, Refresh, Search, Setting, UploadFilled, Warning } from '@element-plus/icons-vue'
-import { knowledgeAction, listDeadLetters, listKnowledgeDocuments, replayDeadLetter, reviewKnowledgeDocument, searchKnowledge, uploadKnowledgeDocument, type DeadLetter, type KnowledgeDocument } from './api'
+import { CircleCheck, Connection, DataBoard, Document, Files, FolderOpened, Refresh, Search, Setting, UploadFilled, View, Warning } from '@element-plus/icons-vue'
+import MarkdownIt from 'markdown-it'
+import { getKnowledgeContent, getKnowledgeFile, knowledgeAction, listDeadLetters, listKnowledgeDocuments, replayDeadLetter, reviewKnowledgeDocument, searchKnowledge, uploadKnowledgeDocument, type DeadLetter, type KnowledgeDocument } from './api'
 
 const props = defineProps<{ user: { display_name: string; role: string }; embedded?: boolean; initialView?: string }>()
 defineEmits<{ logout: [] }>()
@@ -31,6 +32,45 @@ async function documentAction(item: KnowledgeDocument, action: 'publish' | 'arch
 function updateDocument(updated: KnowledgeDocument) { documents.value = documents.value.map(item => item.id === updated.id ? updated : item) }
 async function runSearch() { if (!searchText.value.trim()) return; try { evidence.value = (await searchKnowledge(searchText.value.trim())).items } catch (error: any) { ElMessage.error(error.response?.data?.message || '知识检索失败') } }
 function statusType(status: string) { return status === 'PUBLISHED' ? 'success' : status === 'PARSE_FAILED' ? 'danger' : status === 'REVIEW_REQUIRED' ? 'warning' : 'info' }
+const markdown = new MarkdownIt({ html: false, linkify: true, breaks: true })
+function renderMarkdown(content: string): string { return markdown.render(content) }
+const previewDialog = ref(false)
+const previewDocument = ref<KnowledgeDocument | null>(null)
+const previewTab = ref('markdown')
+const previewHtml = ref('')
+const previewPdfUrl = ref('')
+const previewLoading = ref(false)
+function hasParsedContent(item: KnowledgeDocument | null): boolean { return !!item && ['REVIEW_REQUIRED', 'PUBLISHED', 'ARCHIVED', 'DEACTIVATED'].includes(item.status) }
+async function openPreview(item: KnowledgeDocument) {
+  previewDocument.value = item
+  previewHtml.value = ''
+  previewPdfUrl.value = ''
+  previewDialog.value = true
+  if (hasParsedContent(item)) { previewTab.value = 'markdown'; await loadMarkdown(item.id) }
+  else { previewTab.value = 'pdf'; await loadPdf(item.id) }
+}
+async function loadMarkdown(id: string) {
+  previewLoading.value = true
+  try { const data = await getKnowledgeContent(id); previewHtml.value = renderMarkdown(data.content || '（文档尚未解析出内容）') }
+  catch { previewHtml.value = '<p>正文加载失败</p>' }
+  finally { previewLoading.value = false }
+}
+async function loadPdf(id: string) {
+  previewLoading.value = true
+  try { const blob = await getKnowledgeFile(id); if (previewPdfUrl.value) URL.revokeObjectURL(previewPdfUrl.value); previewPdfUrl.value = URL.createObjectURL(blob) }
+  catch { ElMessage.error('原始文件加载失败') }
+  finally { previewLoading.value = false }
+}
+function switchPreviewTab(tab: string | number | boolean) {
+  const next = String(tab)
+  if (next !== 'markdown' && next !== 'pdf') return
+  previewTab.value = next
+  if (!previewDocument.value) return
+  if (next === 'markdown' && !previewHtml.value) loadMarkdown(previewDocument.value.id)
+  if (next === 'pdf' && !previewPdfUrl.value) loadPdf(previewDocument.value.id)
+}
+function closePreview() { previewDialog.value = false; if (previewPdfUrl.value) { URL.revokeObjectURL(previewPdfUrl.value); previewPdfUrl.value = '' } }
+onBeforeUnmount(() => { if (previewPdfUrl.value) URL.revokeObjectURL(previewPdfUrl.value) })
 onMounted(loadData)
 </script>
 
@@ -40,10 +80,11 @@ onMounted(loadData)
       <section v-loading="loading" class="content"><div class="page-block">
         <template v-if="view === 'overview'"><div class="system-hero"><div><p class="section-kicker">SYSTEM OPERATIONS</p><h2>稳定运行，持续可追溯</h2><p>监控异步事件、知识文档和检索链路的系统状态。</p></div><div class="system-emblem"><Connection /></div></div><div class="system-kpis"><div><small>待处理死信</small><strong>{{ pendingDeadLetters.length }}</strong><span>需要人工重放</span></div><div><small>本次管理文档</small><strong>{{ documents.length }}</strong><span>当前浏览器会话</span></div><div><small>已发布文档</small><strong>{{ publishedDocuments }}</strong><span>可参与 RAG 检索</span></div></div><div class="section-head compact"><div><p class="section-kicker">SYSTEM ALERTS</p><h2>需要关注</h2></div><el-button text type="primary" @click="view = 'deadletters'">查看死信队列</el-button></div><div class="sys-alerts"><article v-for="item in pendingDeadLetters.slice(0, 4)" :key="item.id"><Warning /><div><strong>{{ item.event_type }}</strong><p>{{ item.last_error }}</p><small>{{ item.business_id }} · 已尝试 {{ item.attempts }} 次</small></div><el-button type="primary" plain @click="replay(item)">重放</el-button></article><el-empty v-if="!pendingDeadLetters.length" description="没有待处理死信" /></div></template>
         <template v-else-if="view === 'deadletters'"><div class="section-head"><div><p class="section-kicker">ASYNC EVENT RECOVERY</p><h2>死信队列</h2></div><span class="mono-caption">{{ deadLetters.length }} 条记录</span></div><el-table :data="deadLetters" class="shipment-table"><el-table-column prop="event_type" label="事件类型" min-width="150" /><el-table-column prop="business_id" label="业务标识" min-width="160" /><el-table-column prop="attempts" label="尝试次数" width="90" /><el-table-column prop="last_error" label="最后错误" min-width="220" show-overflow-tooltip /><el-table-column prop="suggested_action" label="建议操作" min-width="150" /><el-table-column label="操作" width="110"><template #default="{ row }"><el-button v-if="!row.replayed_at" type="primary" size="small" @click="replay(row)">重新投递</el-button><el-tag v-else type="success" size="small">已重放</el-tag></template></el-table-column></el-table></template>
-        <template v-else-if="view === 'knowledge'"><div class="section-head"><div><p class="section-kicker">KNOWLEDGE LIFECYCLE</p><h2>知识库文档</h2></div><el-upload ref="uploadRef" :show-file-list="false" accept="application/pdf,.pdf" :http-request="upload"><el-button type="primary"><UploadFilled /> 上传 PDF</el-button></el-upload></div><div class="knowledge-note"><FolderOpened /><span>上传后文档进入 MinerU 异步解析。此列表保留本次浏览器会话中上传或操作的文档。</span></div><div class="document-grid"><article v-for="item in documents" :key="item.id" class="document-card"><div class="doc-icon"><Document /></div><div class="doc-head"><div><h3>{{ item.filename }}</h3><small>{{ (item.size_bytes / 1024).toFixed(1) }} KB · {{ item.content_type }}</small></div><el-tag :type="statusType(item.status)">{{ item.status }}</el-tag></div><p v-if="item.error_message" class="doc-error">{{ item.error_message }}</p><dl><div><dt>分类</dt><dd>{{ item.category || '未分类' }}</dd></div><div><dt>页数</dt><dd>{{ item.page_count ?? '解析中' }}</dd></div><div><dt>解析任务</dt><dd>{{ item.mineru_task_id || '等待提交' }}</dd></div></dl><div class="doc-actions"><el-button size="small" @click="openReview(item)">审核信息</el-button><el-button v-if="item.status === 'REVIEW_REQUIRED'" type="primary" size="small" @click="documentAction(item, 'publish')">发布</el-button><el-button v-if="['PARSE_FAILED', 'ARCHIVED', 'DEACTIVATED'].includes(item.status)" size="small" @click="documentAction(item, 'reparse')">重新解析</el-button><el-button v-if="item.status === 'PUBLISHED'" type="warning" plain size="small" @click="documentAction(item, 'archive')">归档</el-button></div></article><el-empty v-if="!documents.length" description="上传第一份规则文档" /></div></template>
+        <template v-else-if="view === 'knowledge'"><div class="section-head"><div><p class="section-kicker">KNOWLEDGE LIFECYCLE</p><h2>知识库文档</h2></div><el-upload ref="uploadRef" :show-file-list="false" accept="application/pdf,.pdf" :http-request="upload"><el-button type="primary"><UploadFilled /> 上传 PDF</el-button></el-upload></div><div class="knowledge-note"><FolderOpened /><span>上传后文档进入 MinerU 异步解析。此列表保留本次浏览器会话中上传或操作的文档。</span></div><div class="document-grid"><article v-for="item in documents" :key="item.id" class="document-card"><div class="doc-icon"><Document /></div><div class="doc-head"><div><h3>{{ item.filename }}</h3><small>{{ (item.size_bytes / 1024).toFixed(1) }} KB · {{ item.content_type }}</small></div><el-tag :type="statusType(item.status)">{{ item.status }}</el-tag></div><p v-if="item.error_message" class="doc-error">{{ item.error_message }}</p><dl><div><dt>分类</dt><dd>{{ item.category || '未分类' }}</dd></div><div><dt>页数</dt><dd>{{ item.page_count ?? '解析中' }}</dd></div><div><dt>解析任务</dt><dd>{{ item.mineru_task_id || '等待提交' }}</dd></div></dl><div class="doc-actions"><el-button size="small" :icon="View" @click="openPreview(item)">预览</el-button><el-button size="small" @click="openReview(item)">审核信息</el-button><el-button v-if="item.status === 'REVIEW_REQUIRED'" type="primary" size="small" @click="documentAction(item, 'publish')">发布</el-button><el-button v-if="['PARSE_FAILED', 'ARCHIVED', 'DEACTIVATED'].includes(item.status)" size="small" @click="documentAction(item, 'reparse')">重新解析</el-button><el-button v-if="item.status === 'PUBLISHED'" type="warning" plain size="small" @click="documentAction(item, 'archive')">归档</el-button></div></article><el-empty v-if="!documents.length" description="上传第一份规则文档" /></div></template>
         <template v-else><div class="section-head"><div><p class="section-kicker">RAG RETRIEVAL CHECK</p><h2>检索验证</h2></div></div><div class="retrieval-search"><el-input v-model="searchText" size="large" placeholder="输入规则问题，例如：哪些物品禁止寄递？" @keyup.enter="runSearch" /><el-button type="primary" size="large" @click="runSearch"><Search /> 检索</el-button></div><div class="evidence-list"><article v-for="item in evidence" :key="`${item.document_id}-${item.score}`"><div class="evidence-score">{{ (item.score * 100).toFixed(0) }}</div><div><div class="evidence-head"><strong>{{ item.title || item.filename }}</strong><el-tag size="small" effect="plain">{{ item.category || '未分类' }}</el-tag></div><p>{{ item.content }}</p><small>{{ item.filename }} · {{ item.page_start ? `第 ${item.page_start}-${item.page_end || item.page_start} 页` : '无页码' }}</small></div></article><el-empty v-if="!evidence.length" description="输入问题后验证知识检索结果" /></div></template>
       </div></section>
     </main>
     <el-dialog v-model="reviewDialog" title="审核文档信息" width="480px"><el-form label-position="top"><el-form-item label="知识分类"><el-input v-model="reviewForm.category" placeholder="例如：禁寄规则" /></el-form-item><el-form-item label="生效时间"><el-date-picker v-model="reviewForm.effective_from" type="datetime" value-format="YYYY-MM-DDTHH:mm:ssZ" /></el-form-item><el-form-item label="失效时间"><el-date-picker v-model="reviewForm.effective_to" type="datetime" value-format="YYYY-MM-DDTHH:mm:ssZ" /></el-form-item></el-form><template #footer><el-button @click="reviewDialog = false">取消</el-button><el-button type="primary" @click="submitReview">保存审核</el-button></template></el-dialog>
+    <el-dialog v-model="previewDialog" :title="previewDocument?.filename || '文档预览'" width="860px" top="5vh" @closed="closePreview"><div v-loading="previewLoading" class="knowledge-preview"><div v-if="hasParsedContent(previewDocument)" class="preview-toolbar"><el-segmented v-model="previewTab" :options="[{ label: '解析内容', value: 'markdown' }, { label: '原始 PDF', value: 'pdf' }]" @change="switchPreviewTab" /></div><div v-if="previewTab === 'markdown'" class="preview-markdown" v-html="previewHtml" /><iframe v-else class="preview-pdf" :src="previewPdfUrl" /></div></el-dialog>
   </div>
 </template>
