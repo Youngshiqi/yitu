@@ -185,6 +185,7 @@ export async function listDeadLetters(params?: Record<string, unknown>) { return
 export async function replayDeadLetter(id: string) { return (await http.post(`/admin/dead-letters/${id}/replay`)).data }
 
 // ---- 知识库 ----
+export async function listKnowledgeDocuments(params?: Record<string, unknown>) { return (await http.get('/knowledge/documents', { params })).data as KnowledgeDocument[] }
 export async function uploadKnowledgeDocument(file: File) { const body = new FormData(); body.append('file', file); return (await http.post('/knowledge/documents', body, { headers: { 'Content-Type': 'multipart/form-data' } })).data as KnowledgeDocument }
 export async function reviewKnowledgeDocument(id: string, payload: { category?: string; effective_from?: string; effective_to?: string }) { return (await http.post(`/knowledge/documents/${id}/review`, payload)).data as KnowledgeDocument }
 export async function knowledgeAction(id: string, action: 'publish' | 'archive' | 'deactivate' | 'reparse') { return (await http.post(`/knowledge/documents/${id}/${action}`)).data as KnowledgeDocument }

@@ -73,7 +73,6 @@ _REPORTABLE_TYPES: Mapping[Role, frozenset[ExceptionType]] = {
         set(ExceptionType) - {ExceptionType.WAITING_FOR_SUPPLEMENT}
     ),
     Role.OPERATIONS_ADMIN: frozenset(ExceptionType),
-    Role.SYSTEM_ADMIN: frozenset(),
 }
 
 _TASK_FIVE_EXECUTABLE_RESOLUTIONS = frozenset(

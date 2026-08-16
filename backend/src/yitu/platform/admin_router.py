@@ -82,5 +82,5 @@ async def replay_dead_letter(
 
 
 def _require_system_admin(user: CurrentUser) -> None:
-    if user.role is not Role.SYSTEM_ADMIN:
+    if user.role is not Role.OPERATIONS_ADMIN:
         raise AppError("FORBIDDEN_ROLE", "角色权限不足", 403)

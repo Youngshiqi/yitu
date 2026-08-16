@@ -16,7 +16,6 @@ class Role(str, enum.Enum):
     COURIER = "COURIER"
     STATION_OPERATOR = "STATION_OPERATOR"
     OPERATIONS_ADMIN = "OPERATIONS_ADMIN"
-    SYSTEM_ADMIN = "SYSTEM_ADMIN"
 
 
 class Station(Base):

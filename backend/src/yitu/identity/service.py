@@ -71,8 +71,6 @@ def require_station_scope(
     station_id: UUID, current_user: CurrentUser
 ) -> CurrentUser:
     """校验当前用户是否属于指定网点范围。"""
-    if current_user.role is Role.SYSTEM_ADMIN:
-        return current_user
     if current_user.station_id != station_id:
         raise AppError(
             code="FORBIDDEN_STATION_SCOPE",

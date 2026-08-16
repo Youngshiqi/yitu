@@ -2,13 +2,14 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Query, UploadFile
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yitu.identity.models import Role
 from yitu.identity.service import CurrentUser, get_current_user, require_roles
 from yitu.knowledge.blob_store import get_blob_store
 from yitu.knowledge.lifecycle import change_document_status
-from yitu.knowledge.models import DocumentStatus
+from yitu.knowledge.models import DocumentStatus, KnowledgeDocument
 from yitu.knowledge.retrieval import KnowledgeRetriever
 from yitu.knowledge.retrieval_schemas import EvidenceView, KnowledgeSearchResponse
 from yitu.knowledge.schemas import KnowledgeDocumentView, KnowledgeReviewRequest
@@ -23,7 +24,7 @@ _authenticated = Depends(get_current_user)
 
 
 def admin_user(current_user: CurrentUser = _authenticated) -> CurrentUser:
-    return require_roles(Role.OPERATIONS_ADMIN, Role.SYSTEM_ADMIN)(current_user)
+    return require_roles(Role.OPERATIONS_ADMIN)(current_user)
 
 
 _admins = Depends(admin_user)
@@ -50,6 +51,22 @@ async def upload_knowledge_document(
     submit_mineru_document.delay(str(document.id))
     await session.refresh(document)
     return KnowledgeDocumentView.model_validate(document)
+
+
+@router.get("/documents", response_model=list[KnowledgeDocumentView])
+async def list_knowledge_documents(
+    limit: int = Query(default=100, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    _user: CurrentUser = _admins,
+    session: AsyncSession = _session,
+) -> list[KnowledgeDocumentView]:
+    result = await session.scalars(
+        select(KnowledgeDocument)
+        .order_by(KnowledgeDocument.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    return [KnowledgeDocumentView.model_validate(item) for item in result.all()]
 
 
 @router.get("/documents/{document_id}", response_model=KnowledgeDocumentView)

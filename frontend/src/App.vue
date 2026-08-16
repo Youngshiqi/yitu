@@ -7,7 +7,6 @@ import { consumeAgentGrant, createAddress, createConversation, createQuote, crea
 import StationOperatorWorkspace from './StationOperatorWorkspace.vue'
 import CourierWorkspace from './CourierWorkspace.vue'
 import OperationsWorkspace from './OperationsWorkspace.vue'
-import SystemAdminWorkspace from './SystemAdminWorkspace.vue'
 
 const loggedIn = ref(Boolean(localStorage.getItem('yitu_token')))
 const user = ref<{ display_name: string; role: string; station_id?: string | null } | null>(null)
@@ -30,7 +29,6 @@ const loginAccounts = [
   { login_name: 'operator.beijing.demo', label: '北京网点操作员 · operator.beijing.demo', role: 'STATION_OPERATOR' },
   { login_name: 'operator.shanghai.demo', label: '上海网点操作员 · operator.shanghai.demo', role: 'STATION_OPERATOR' },
   { login_name: 'operations.demo', label: '运营管理员 · operations.demo', role: 'OPERATIONS_ADMIN' },
-  { login_name: 'system.demo', label: '系统管理员 · system.demo', role: 'SYSTEM_ADMIN' },
 ]
 const addressDialog = ref(false)
 const emptyAddress = (): AddressInput => ({ label: '常用地址', recipient_name: '', phone: '', province_region_id: '', city_region_id: '', district_region_id: '', detail: '' })
@@ -50,6 +48,14 @@ const agentSending = ref(false)
 const chatListCollapsed = ref(false)
 const messagesContainer = ref<HTMLElement | null>(null)
 const markdown = new MarkdownIt({ html: false, linkify: true, breaks: true })
+
+type AppUser = { display_name: string; role: string; station_id?: string | null }
+
+// 兼容角色合并前签发的旧会话，前端统一进入运营管理员工作区。
+function normalizeUser(value: AppUser | null): AppUser | null {
+  if (!value) return null
+  return value.role === 'SYSTEM_ADMIN' ? { ...value, role: 'OPERATIONS_ADMIN' } : value
+}
 const defaultLinkOpen = markdown.renderer.rules.link_open ?? ((tokens, index, options, _environment, renderer) => renderer.renderToken(tokens, index, options))
 markdown.renderer.rules.link_open = (tokens, index, options, environment, renderer) => {
   tokens[index].attrSet('target', '_blank')
@@ -126,7 +132,7 @@ async function loadData() {
     shipments.value = ship.items ?? []; total.value = ship.total ?? 0; addresses.value = addr; notifications.value = notice; conversations.value = chats
   } catch { ElMessage.error('数据加载失败，请确认后端服务已启动') } finally { loading.value = false }
 }
-async function doLogin() { try { await login(loginForm.value.login_name, loginForm.value.password); loggedIn.value = true; user.value = await me(); if (user.value?.role === 'CUSTOMER') await loadData() } catch { ElMessage.error('账号或密码错误') } }
+async function doLogin() { try { await login(loginForm.value.login_name, loginForm.value.password); loggedIn.value = true; user.value = normalizeUser(await me()); if (user.value?.role === 'CUSTOMER') await loadData() } catch { ElMessage.error('账号或密码错误') } }
 function logout() { localStorage.removeItem('yitu_token'); loggedIn.value = false; user.value = null }
 function handleAuthExpired() { loggedIn.value = false; user.value = null; ElMessage.warning('登录状态已失效，请重新登录') }
 async function openShipment(item: Shipment) {
@@ -296,7 +302,7 @@ async function confirmAgentShipment() { if (!activeConversation.value) return; t
 async function readNotice(item: Notification) { if (item.status !== 'READ') { await markNotificationRead(item.id); item.status = 'READ' } }
 function supplementAmount(item: Notification) { return typeof item.template_data.amount_cents === 'number' ? item.template_data.amount_cents : 0 }
 async function confirmSupplement(item: Notification) { const quoteId = typeof item.template_data.quote_id === 'string' ? item.template_data.quote_id : ''; const shipmentId = typeof item.template_data.shipment_id === 'string' ? item.template_data.shipment_id : ''; const amount = supplementAmount(item); if (!quoteId || !shipmentId || amount <= 0) return; try { await paySupplement(quoteId, { shipment_id: shipmentId, amount_cents: amount }); await readNotice(item); ElMessage.success('补缴成功，快递员将继续揽收'); await loadData() } catch (error: any) { ElMessage.error(error.response?.data?.message || '补缴失败，请刷新后重试') } }
-onMounted(async () => { window.addEventListener('yitu-auth-expired', handleAuthExpired); if (loggedIn.value) { try { user.value = await me(); if (user.value?.role === 'CUSTOMER') await loadData() } catch { logout() } } })
+onMounted(async () => { window.addEventListener('yitu-auth-expired', handleAuthExpired); if (loggedIn.value) { try { user.value = normalizeUser(await me()); if (user.value?.role === 'CUSTOMER') await loadData() } catch { logout() } } })
 onBeforeUnmount(() => window.removeEventListener('yitu-auth-expired', handleAuthExpired))
 </script>
 
@@ -308,7 +314,6 @@ onBeforeUnmount(() => window.removeEventListener('yitu-auth-expired', handleAuth
   <CourierWorkspace v-else-if="user?.role === 'COURIER'" :user="user" @logout="logout" />
   <StationOperatorWorkspace v-else-if="user?.role === 'STATION_OPERATOR'" :user="user" @logout="logout" />
   <OperationsWorkspace v-else-if="user?.role === 'OPERATIONS_ADMIN'" :user="user" @logout="logout" />
-  <SystemAdminWorkspace v-else-if="user?.role === 'SYSTEM_ADMIN'" :user="user" @logout="logout" />
   <div v-else class="app-shell">
     <aside class="sidebar"><div class="logo"><span>Y</span><div>Yitu<small>物流工作台</small></div></div><div class="workspace-label">客户工作区</div><nav><button v-for="item in nav" :key="item.id" :class="{ active: view === item.id }" @click="view = item.id"><component :is="item.icon" /><span>{{ item.label }}</span><b v-if="item.badge">{{ item.badge }}</b></button></nav><div class="sidebar-foot"><el-button text @click="logout"><Setting /> 退出登录</el-button></div></aside>
     <main class="main"><header class="topbar"><div><div class="crumb">客户中心 <span>/</span> {{ nav.find(n => n.id === view)?.label ?? '运单详情' }}</div><h1>{{ view === 'detail' ? '运单详情' : nav.find(n => n.id === view)?.label }}</h1></div><div class="top-actions"><el-input v-model="query" placeholder="搜索运单号" :prefix-icon="Search" clearable /><el-avatar :size="34">{{ user?.display_name?.slice(0, 1) }}</el-avatar><span class="user-name">{{ user?.display_name || '演示客户' }}</span></div></header>

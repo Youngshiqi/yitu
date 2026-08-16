@@ -30,7 +30,7 @@ from yitu.sla.service import SLAService
 router = APIRouter(prefix="/api/v1/sla", tags=["sla"])
 _session = Depends(get_session)
 _current_user = Depends(get_current_user)
-_operators = Depends(require_roles(Role.OPERATIONS_ADMIN, Role.SYSTEM_ADMIN))
+_operators = Depends(require_roles(Role.OPERATIONS_ADMIN))
 
 
 @router.post("/rules", response_model=SLARuleView, status_code=status.HTTP_201_CREATED)

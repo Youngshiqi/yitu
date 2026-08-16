@@ -1,13 +1,14 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { CircleCheck, Connection, DataBoard, Document, Files, FolderOpened, Refresh, Search, Setting, UploadFilled, Warning } from '@element-plus/icons-vue'
-import { knowledgeAction, listDeadLetters, replayDeadLetter, reviewKnowledgeDocument, searchKnowledge, uploadKnowledgeDocument, type DeadLetter, type KnowledgeDocument } from './api'
+import { knowledgeAction, listDeadLetters, listKnowledgeDocuments, replayDeadLetter, reviewKnowledgeDocument, searchKnowledge, uploadKnowledgeDocument, type DeadLetter, type KnowledgeDocument } from './api'
 
-defineProps<{ user: { display_name: string; role: string } }>()
+const props = defineProps<{ user: { display_name: string; role: string }; embedded?: boolean; initialView?: string }>()
 defineEmits<{ logout: [] }>()
 
 const view = ref('overview')
+watch(() => props.initialView, (next) => { if (next) view.value = next }, { immediate: true })
 const loading = ref(false)
 const deadLetters = ref<DeadLetter[]>([])
 const documents = ref<KnowledgeDocument[]>([])
@@ -21,7 +22,7 @@ const nav = [{ id: 'overview', label: '系统概览', icon: DataBoard }, { id: '
 const pendingDeadLetters = computed(() => deadLetters.value.filter(item => !item.replayed_at))
 const publishedDocuments = computed(() => documents.value.filter(item => item.status === 'PUBLISHED').length)
 
-async function loadData() { loading.value = true; try { deadLetters.value = await listDeadLetters({ limit: 100, offset: 0 }) } catch { ElMessage.error('系统运维数据加载失败') } finally { loading.value = false } }
+async function loadData() { loading.value = true; try { const [deadLetterItems, documentItems] = await Promise.all([listDeadLetters({ limit: 100, offset: 0 }), listKnowledgeDocuments({ limit: 100, offset: 0 })]); deadLetters.value = deadLetterItems; documents.value = documentItems } catch { ElMessage.error('系统运维数据加载失败') } finally { loading.value = false } }
 async function replay(item: DeadLetter) { try { await replayDeadLetter(item.id); ElMessage.success('死信已重新投递'); await loadData() } catch (error: any) { ElMessage.error(error.response?.data?.message || '死信重放失败') } }
 async function upload(request: { file: File }) { try { const document = await uploadKnowledgeDocument(request.file); documents.value = [document, ...documents.value]; ElMessage.success('文档已上传，正在进入解析队列') } catch (error: any) { ElMessage.error(error.response?.data?.message || '文档上传失败') } }
 function openReview(item: KnowledgeDocument) { selectedDocument.value = item; reviewForm.value = { category: item.category || '', effective_from: '', effective_to: '' }; reviewDialog.value = true }
@@ -34,8 +35,8 @@ onMounted(loadData)
 </script>
 
 <template>
-  <div class="app-shell system-shell"><aside class="sidebar"><div class="logo"><span>Y</span><div>Yitu<small>物流工作台</small></div></div><div class="workspace-label">系统管理工作区</div><nav><button v-for="item in nav" :key="item.id" :class="{ active: view === item.id }" @click="view = item.id"><component :is="item.icon" /><span>{{ item.label }}</span><b v-if="item.id === 'deadletters' && pendingDeadLetters.length">{{ pendingDeadLetters.length }}</b></button></nav><div class="system-health"><small>服务运行状态</small><strong><i></i> 正常</strong><span>队列与对象存储可用</span></div><div class="sidebar-foot"><el-button text @click="$emit('logout')"><Setting /> 退出登录</el-button></div></aside>
-    <main class="main"><header class="topbar"><div><div class="crumb">系统运维 <span>/</span> {{ nav.find(item => item.id === view)?.label }}</div><h1>{{ nav.find(item => item.id === view)?.label }}</h1></div><div class="top-actions"><el-button circle :icon="Refresh" @click="loadData" /><el-avatar :size="34">{{ user.display_name.slice(0, 1) }}</el-avatar><span class="user-name">{{ user.display_name }}</span></div></header>
+  <div :class="props.embedded ? 'system-embedded' : 'app-shell system-shell'"><aside v-if="!props.embedded" class="sidebar"><div class="logo"><span>Y</span><div>Yitu<small>物流工作台</small></div></div><div class="workspace-label">系统管理工作区</div><nav><button v-for="item in nav" :key="item.id" :class="{ active: view === item.id }" @click="view = item.id"><component :is="item.icon" /><span>{{ item.label }}</span><b v-if="item.id === 'deadletters' && pendingDeadLetters.length">{{ pendingDeadLetters.length }}</b></button></nav><div class="system-health"><small>服务运行状态</small><strong><i></i> 正常</strong><span>队列与对象存储可用</span></div><div class="sidebar-foot"><el-button text @click="$emit('logout')"><Setting /> 退出登录</el-button></div></aside>
+    <main class="main"><header v-if="!props.embedded" class="topbar"><div><div class="crumb">系统运维 <span>/</span> {{ nav.find(item => item.id === view)?.label }}</div><h1>{{ nav.find(item => item.id === view)?.label }}</h1></div><div class="top-actions"><el-button circle :icon="Refresh" @click="loadData" /><el-avatar :size="34">{{ user.display_name.slice(0, 1) }}</el-avatar><span class="user-name">{{ user.display_name }}</span></div></header>
       <section v-loading="loading" class="content"><div class="page-block">
         <template v-if="view === 'overview'"><div class="system-hero"><div><p class="section-kicker">SYSTEM OPERATIONS</p><h2>稳定运行，持续可追溯</h2><p>监控异步事件、知识文档和检索链路的系统状态。</p></div><div class="system-emblem"><Connection /></div></div><div class="system-kpis"><div><small>待处理死信</small><strong>{{ pendingDeadLetters.length }}</strong><span>需要人工重放</span></div><div><small>本次管理文档</small><strong>{{ documents.length }}</strong><span>当前浏览器会话</span></div><div><small>已发布文档</small><strong>{{ publishedDocuments }}</strong><span>可参与 RAG 检索</span></div></div><div class="section-head compact"><div><p class="section-kicker">SYSTEM ALERTS</p><h2>需要关注</h2></div><el-button text type="primary" @click="view = 'deadletters'">查看死信队列</el-button></div><div class="sys-alerts"><article v-for="item in pendingDeadLetters.slice(0, 4)" :key="item.id"><Warning /><div><strong>{{ item.event_type }}</strong><p>{{ item.last_error }}</p><small>{{ item.business_id }} · 已尝试 {{ item.attempts }} 次</small></div><el-button type="primary" plain @click="replay(item)">重放</el-button></article><el-empty v-if="!pendingDeadLetters.length" description="没有待处理死信" /></div></template>
         <template v-else-if="view === 'deadletters'"><div class="section-head"><div><p class="section-kicker">ASYNC EVENT RECOVERY</p><h2>死信队列</h2></div><span class="mono-caption">{{ deadLetters.length }} 条记录</span></div><el-table :data="deadLetters" class="shipment-table"><el-table-column prop="event_type" label="事件类型" min-width="150" /><el-table-column prop="business_id" label="业务标识" min-width="160" /><el-table-column prop="attempts" label="尝试次数" width="90" /><el-table-column prop="last_error" label="最后错误" min-width="220" show-overflow-tooltip /><el-table-column prop="suggested_action" label="建议操作" min-width="150" /><el-table-column label="操作" width="110"><template #default="{ row }"><el-button v-if="!row.replayed_at" type="primary" size="small" @click="replay(row)">重新投递</el-button><el-tag v-else type="success" size="small">已重放</el-tag></template></el-table-column></el-table></template>

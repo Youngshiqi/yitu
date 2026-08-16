@@ -3,13 +3,12 @@ from sqlalchemy import inspect
 from yitu.identity.models import Role, Station, User
 
 
-def test_role_contains_five_business_roles() -> None:
+def test_role_contains_four_business_roles() -> None:
     assert {role.value for role in Role} == {
         "CUSTOMER",
         "COURIER",
         "STATION_OPERATOR",
         "OPERATIONS_ADMIN",
-        "SYSTEM_ADMIN",
     }
 
 

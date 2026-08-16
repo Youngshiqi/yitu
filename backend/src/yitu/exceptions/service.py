@@ -568,7 +568,7 @@ class ExceptionService:
 
     def _scoped_cases(self, actor: CurrentUser) -> Select[tuple[ExceptionCase]]:
         statement = select(ExceptionCase).join(Shipment, Shipment.id == ExceptionCase.shipment_id)
-        if actor.role is Role.OPERATIONS_ADMIN or actor.role is Role.SYSTEM_ADMIN:
+        if actor.role is Role.OPERATIONS_ADMIN:
             return statement
         if actor.role is Role.CUSTOMER:
             return statement.where(Shipment.owner_id == actor.id)

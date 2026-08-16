@@ -17,7 +17,6 @@ _DEMO_USERS = (
     ("30000000-0000-4000-8000-000000000004", "operator.beijing.demo", "北京网点员", Role.STATION_OPERATOR, "BJS-001", "operator-bj"),
     ("30000000-0000-4000-8000-000000000005", "operator.shanghai.demo", "上海网点员", Role.STATION_OPERATOR, "SHS-001", "operator-sh"),
     ("30000000-0000-4000-8000-000000000006", "operations.demo", "运营管理员", Role.OPERATIONS_ADMIN, None, "operations"),
-    ("30000000-0000-4000-8000-000000000007", "system.demo", "系统管理员", Role.SYSTEM_ADMIN, None, "system"),
 )
 
 

@@ -13,7 +13,7 @@ from yitu.platform.errors import AppError
 
 
 async def change_document_status(session: AsyncSession, document_id: UUID, user: CurrentUser, target: DocumentStatus, review: KnowledgeReviewRequest | None = None) -> KnowledgeDocument:
-    if user.role not in {Role.OPERATIONS_ADMIN, Role.SYSTEM_ADMIN}:
+    if user.role is not Role.OPERATIONS_ADMIN:
         raise AppError("FORBIDDEN_ROLE", "role is not allowed", 403)
     document = await session.get(KnowledgeDocument, document_id, with_for_update=True)
     if document is None:
