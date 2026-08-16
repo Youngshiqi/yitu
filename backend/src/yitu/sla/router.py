@@ -44,6 +44,20 @@ async def create_rule(payload: SLARuleCreate, user: CurrentUser = _operators, se
     return rule
 
 
+@router.get("/rules", response_model=list[SLARuleView])
+async def list_rules(
+    _user: CurrentUser = _operators,
+    session: AsyncSession = _session,
+) -> list[SLARule]:
+    return list(
+        (
+            await session.scalars(
+                select(SLARule).order_by(SLARule.effective_from.desc())
+            )
+        ).all()
+    )
+
+
 @router.post("/shipments/{shipment_id}/instances", response_model=SLAInstanceView, status_code=status.HTTP_201_CREATED)
 async def start_instance(shipment_id: UUID, payload: SLAInstanceStart, user: CurrentUser = _operators, session: AsyncSession = _session) -> SLAInstance:
     """为运单启动一个履约阶段 SLA。"""

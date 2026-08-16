@@ -16,6 +16,7 @@ from yitu.exceptions.models import ExceptionCase
 from yitu.platform.audit import AuditService
 from yitu.platform.clock import Clock, to_business_timezone
 from yitu.platform.outbox import OutboxService
+from yitu.shipments.enums import ShipmentStatus
 from yitu.shipments.models import Shipment
 from yitu.sla.calendar import add_work_hours, work_hours_between
 from yitu.sla.models import SLAInstance, SLAPause, SLARule
@@ -36,6 +37,40 @@ class SLAService:
         self.session = session
         self.clock = clock or Clock()
 
+    async def sync_shipment_transition(
+        self,
+        shipment: Shipment,
+        previous: ShipmentStatus,
+        target: ShipmentStatus,
+    ) -> None:
+        """Drive SLA stages from shipment state changes without blocking fulfillment."""
+        del previous
+        stage_by_status = {
+            ShipmentStatus.PENDING_PICKUP: "PICKUP",
+            ShipmentStatus.IN_LINEHAUL: "LINEHAUL",
+            ShipmentStatus.AT_DESTINATION_STATION: "DELIVERY",
+        }
+        stage = stage_by_status.get(target)
+        if stage is not None:
+            try:
+                await self.start(shipment.id, "DEFAULT", stage)
+            except ValueError:
+                # A missing rule must not prevent a shipment state transition.
+                pass
+        if target is ShipmentStatus.DELIVERED:
+            running = (
+                await self.session.scalars(
+                    select(SLAInstance).where(
+                        SLAInstance.shipment_id == shipment.id,
+                        SLAInstance.status == "RUNNING",
+                    )
+                )
+            ).all()
+            for instance in running:
+                await self.complete(instance.id)
+        elif target is ShipmentStatus.CANCELLED:
+            await self.cancel_active_for_shipment(shipment.id, "shipment_cancelled")
+
     async def start(
         self, shipment_id: UUID, route_code: str, stage: str, *, service_type: str = "STANDARD"
     ) -> SLAInstance:
@@ -51,7 +86,7 @@ class SLAService:
             return existing
         rules = (await self.session.scalars(
             select(SLARule).where(
-                SLARule.route_code == route_code,
+                SLARule.route_code.in_([route_code, "DEFAULT"]),
                 SLARule.service_type == service_type,
                 SLARule.stage == stage,
                 SLARule.active.is_(True),

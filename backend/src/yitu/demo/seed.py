@@ -7,6 +7,7 @@ from yitu.identity.models import Role, Station, User
 from yitu.identity.security import hash_password
 from yitu.platform.clock import Clock
 from yitu.pricing.models import PricingRule
+from yitu.sla.models import SLARule
 from yitu.stations.models import ServiceArea
 
 DEMO_PASSWORD = "YituDemo2026!"
@@ -86,6 +87,39 @@ async def seed_demo_service_areas(session: AsyncSession) -> None:
             for station in stations
             for service_type in ("HOME_PICKUP", "HOME_DELIVERY")
             if (station.district_code, service_type) not in existing
+        ]
+    )
+    await session.flush()
+
+
+async def seed_demo_sla_rules(session: AsyncSession) -> None:
+    """Provide conservative default stage targets for the demo environment."""
+    stages = (("PICKUP", 9), ("LINEHAUL", 18), ("DELIVERY", 18))
+    existing = {
+        rule.stage
+        for rule in (
+            await session.scalars(
+                select(SLARule).where(
+                    SLARule.route_code == "DEFAULT",
+                    SLARule.service_type == "STANDARD",
+                )
+            )
+        ).all()
+    }
+    session.add_all(
+        [
+            SLARule(
+                id=UUID(f"50000000-0000-4000-8000-00000000000{index}"),
+                version="sla-demo-v1",
+                route_code="DEFAULT",
+                service_type="STANDARD",
+                stage=stage,
+                target_work_hours=hours,
+                effective_from=Clock.now(),
+                active=True,
+            )
+            for index, (stage, hours) in enumerate(stages, start=1)
+            if stage not in existing
         ]
     )
     await session.flush()

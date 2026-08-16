@@ -30,6 +30,7 @@ from yitu.shipments.models import Shipment, ShipmentPackage
 from yitu.shipments.schemas import CreateShipmentCommand, ReweighCommand
 from yitu.shipments.state_machine import transition
 from yitu.sla.models import SLAInstance
+from yitu.sla.service import SLAService
 from yitu.stations.service import match_station
 from yitu.tracking.models import TrackingEvent
 from yitu.tracking.schemas import TrackingEventView
@@ -478,6 +479,9 @@ class ShipmentTransitionService:
             return existing
         previous = ShipmentStatus(shipment.status)
         shipment.status = transition(previous, target)
+        await SLAService(self._session).sync_shipment_transition(
+            shipment, previous, target
+        )
         event = await append_tracking_event(
             self._session,
             shipment.id,

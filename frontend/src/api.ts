@@ -34,6 +34,7 @@ export type AgentStreamEvent =
   | { event: 'error'; data: { code: string; message: string } }
 export type CourierTask = { id: string; shipment_id: string; task_type: 'PICKUP' | 'DELIVERY'; status: 'AVAILABLE' | 'ACCEPTED' | 'COMPLETED' | 'CANCELLED'; assignee_id?: string }
 export type Quote = { id: string; total_cents: number; currency: string; line_items: Array<{ name: string; amount_cents: number }>; rule_version: string; created_at: string }
+export type SLARule = { id: string; version: string; route_code: string; service_type: string; stage: string; target_work_hours?: number | null; target_natural_hours?: number | null; effective_from: string; effective_to?: string | null; active: boolean }
 export type ExceptionCase = { id: string; shipment_id: string; case_type: string; severity: string; status: string; description: string; blocks_fulfillment: boolean; assigned_to?: string; opened_at: string }
 export type DeadLetter = { id: string; event_id: string; event_type: string; business_id: string; attempts: number; last_error: string; failed_at: string; replayed_at?: string; suggested_action: string }
 export type KnowledgeDocument = { id: string; filename: string; content_type: string; size_bytes: number; sha256: string; status: string; page_count?: number; error_message?: string; mineru_task_id?: string; created_at: string; updated_at: string; category?: string; published_at?: string }
@@ -179,6 +180,8 @@ export async function advanceReturn(id: string) { return (await http.post(`/retu
 
 // ---- SLA ----
 export async function listSlaInstances(shipmentId: string) { return (await http.get(`/sla/shipments/${shipmentId}/instances`)).data }
+export async function listSlaRules() { return (await http.get('/sla/rules')).data as SLARule[] }
+export async function createSlaRule(payload: Omit<SLARule, 'id'>) { return (await http.post('/sla/rules', payload)).data as SLARule }
 
 // ---- 死信 ----
 export async function listDeadLetters(params?: Record<string, unknown>) { return (await http.get('/admin/dead-letters', { params })).data as DeadLetter[] }

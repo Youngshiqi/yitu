@@ -48,12 +48,14 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         from yitu.demo.seed import (
             seed_demo_pricing,
             seed_demo_service_areas,
+            seed_demo_sla_rules,
             seed_demo_users,
         )
 
         async with SessionFactory() as session, session.begin():
             await seed_demo_users(session)
             await seed_demo_pricing(session)
+            await seed_demo_sla_rules(session)
             await seed_demo_service_areas(session)
     try:
         yield
