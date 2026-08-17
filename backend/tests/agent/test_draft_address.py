@@ -257,3 +257,70 @@ async def test_save_draft_address_distinct_address_still_creates() -> None:
             )
         )
         assert len(rows) == 2
+
+
+async def test_save_draft_address_normalizes_phone_format() -> None:
+    """手机号带空格/连字符/+86 与已存号码应判为同一地址，复用而非重复建行。"""
+    async with SessionFactory() as session, session.begin():
+        actor, conversation_id = await _seed_actor_and_conversation(session)
+        province, city, district = await _seed_region_path(session)
+
+        base = _payload(province, city, district, role="receiver", save=True)
+        first = await AgentConversationService(session).save_draft_address(
+            conversation_id, actor, base
+        )
+        digits = base.phone
+        variants = (
+            f"{digits[:3]} {digits[3:7]} {digits[7:]}",
+            f"{digits[:3]}-{digits[3:7]}-{digits[7:]}",
+            f"+86 {digits}",
+            f"+86{digits}",
+        )
+        for phone in variants:
+            alt = base.model_copy(update={"phone": phone})
+            result = await AgentConversationService(session).save_draft_address(
+                conversation_id, actor, alt
+            )
+            assert result.payload["receiver_address_id"] == first.payload["receiver_address_id"]
+
+        rows = list(
+            await session.scalars(
+                select(Address).where(
+                    Address.owner_id == actor.id,
+                    Address.phone == base.phone,
+                )
+            )
+        )
+        assert len(rows) == 1
+
+
+async def test_save_draft_address_normalizes_inner_whitespace() -> None:
+    """姓名与门牌的内部空白/全半角差异应视为同一地址，复用而非重复建行。"""
+    async with SessionFactory() as session, session.begin():
+        actor, conversation_id = await _seed_actor_and_conversation(session)
+        province, city, district = await _seed_region_path(session)
+
+        base = _payload(province, city, district, role="receiver", save=True)
+        first = await AgentConversationService(session).save_draft_address(
+            conversation_id, actor, base
+        )
+        alt = base.model_copy(
+            update={
+                "recipient_name": "张 三",
+                "detail": "建国路 88 号",
+            }
+        )
+        second = await AgentConversationService(session).save_draft_address(
+            conversation_id, actor, alt
+        )
+
+        assert second.payload["receiver_address_id"] == first.payload["receiver_address_id"]
+        rows = list(
+            await session.scalars(
+                select(Address).where(
+                    Address.owner_id == actor.id,
+                    Address.phone == base.phone,
+                )
+            )
+        )
+        assert len(rows) == 1

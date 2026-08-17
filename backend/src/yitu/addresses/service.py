@@ -1,14 +1,36 @@
+import re
+import unicodedata
 from uuid import UUID
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from yitu.addresses.models import Address
 from yitu.identity.models import Role
 from yitu.identity.service import CurrentUser
+from yitu.platform.clock import Clock
 from yitu.platform.errors import AppError
 from yitu.regions.service import resolve_region_path
+
+_PHONE_NON_DIGIT = re.compile(r"\D+")
+_WHITESPACE = re.compile(r"\s+")
+
+
+def normalize_phone(value: str) -> str:
+    """手机号归一化为可比较的纯数字串，消除空格、连字符、国家码等格式差异。"""
+    digits = _PHONE_NON_DIGIT.sub("", value or "")
+    if len(digits) == 13 and digits.startswith("86"):
+        digits = digits[2:]
+    elif digits.startswith("0086"):
+        digits = digits[4:]
+    return digits
+
+
+def normalize_address_text(value: str) -> str:
+    """地址文本归一化：NFKC 全半角统一 + 去全部空白，忽略空格排版差异。"""
+    normalized = unicodedata.normalize("NFKC", value or "")
+    return _WHITESPACE.sub("", normalized)
 
 
 async def find_matching_address(
@@ -21,27 +43,36 @@ async def find_matching_address(
 ) -> Address | None:
     """按归一化五元组查找既有地址，优先返回正式条目和更早创建的记录。
 
-    姓名与门牌做 strip 归一化后精确比较；命中即视为同一地址，调用方应复用而非新建。
+    姓名、手机号、门牌做归一化后精确比较（手机号去格式与国家码、文本去空白与全半角差异）；
+    命中即视为同一地址，调用方应复用而非新建。
     """
-    result = await session.scalars(
+    want_name = normalize_address_text(recipient_name)
+    want_phone = normalize_phone(phone)
+    want_detail = normalize_address_text(detail)
+    candidates = await session.scalars(
         select(Address)
         .where(
             Address.owner_id == owner_id,
-            func.trim(Address.recipient_name) == recipient_name.strip(),
-            Address.phone == phone.strip(),
             Address.district_region_id == district_region_id,
-            func.trim(Address.detail) == detail.strip(),
+            Address.deleted_at.is_(None),
         )
         .order_by(Address.ephemeral.asc(), Address.id.asc())
-        .limit(1)
     )
-    return result.first()
+    for address in candidates:
+        if normalize_address_text(address.recipient_name) != want_name:
+            continue
+        if normalize_phone(address.phone) != want_phone:
+            continue
+        if normalize_address_text(address.detail) != want_detail:
+            continue
+        return address
+    return None
 
 
 async def get_owned_address(session: AsyncSession, address_id: UUID, user: CurrentUser) -> Address:
     address = await session.scalar(
         select(Address)
-        .where(Address.id == address_id)
+        .where(Address.id == address_id, Address.deleted_at.is_(None))
         .options(
             selectinload(Address.province_region),
             selectinload(Address.city_region),
@@ -55,10 +86,14 @@ async def get_owned_address(session: AsyncSession, address_id: UUID, user: Curre
     return address
 
 async def list_addresses(session: AsyncSession, user: CurrentUser) -> list[Address]:
-    """返回正式地址簿条目，过滤掉下单用的一次性临时地址。"""
+    """返回正式地址簿条目，过滤掉下单用的一次性临时地址与已软删除条目。"""
     result = await session.scalars(
         select(Address)
-        .where(Address.owner_id == user.id, Address.ephemeral.is_(False))
+        .where(
+            Address.owner_id == user.id,
+            Address.ephemeral.is_(False),
+            Address.deleted_at.is_(None),
+        )
         .options(
             selectinload(Address.province_region),
             selectinload(Address.city_region),
@@ -117,4 +152,5 @@ def address_response(address: Address) -> dict[str, object]:
     }
 
 async def delete_address(session: AsyncSession, address: Address) -> None:
-    await session.execute(delete(Address).where(Address.id == address.id))
+    """软删除地址：仅打 deleted_at 标记，保留物理行供历史运单外键引用。"""
+    address.deleted_at = Clock.now()
