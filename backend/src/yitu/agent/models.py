@@ -4,6 +4,7 @@ from datetime import datetime
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Index,
@@ -12,9 +13,11 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
+from pgvector.sqlalchemy import Vector
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
+from yitu.knowledge.embedding import QWEN_EMBEDDING_DIMENSION
 from yitu.platform.models import Base
 
 
@@ -120,10 +123,19 @@ class AgentActionGrant(Base):
 
 
 class AgentMemory(Base):
-    """保存用户明确确认的持久记忆；原始消息和敏感信息不进入该表。"""
+    """保存用户明确确认的持久记忆；原始消息和敏感信息不进入该表。
+
+    embedding 为空表示存量数据或向量生成失败，召回时按更新时间兜底。
+    """
 
     __tablename__ = "agent_memories"
-    __table_args__ = (Index("ix_agent_memories_owner_active", "owner_id", "active"),)
+    __table_args__ = (
+        Index("ix_agent_memories_owner_active", "owner_id", "active"),
+        CheckConstraint(
+            "embedding IS NULL OR (embedding_model IS NOT NULL AND length(embedding_model) > 0)",
+            name="ck_agent_memories_embedding_model",
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     owner_id: Mapped[UUID] = mapped_column(
@@ -135,3 +147,7 @@ class AgentMemory(Base):
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    embedding: Mapped[list[float] | None] = mapped_column(
+        Vector(QWEN_EMBEDDING_DIMENSION), nullable=True
+    )
+    embedding_model: Mapped[str | None] = mapped_column(String(128), nullable=True)

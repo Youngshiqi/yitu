@@ -19,7 +19,8 @@ from yitu.agent.draft_loop import build_draft_loop_graph
 from yitu.agent.drafts import DraftPatch, DraftService, DraftView
 from yitu.agent.graph import build_agent_graph
 from yitu.agent.model_adapter import ModelAdapter, ModelMessage, ModelUnavailableError
-from yitu.agent.models import AgentConversation, AgentMemory, AgentMessage
+from yitu.agent.memory import MemoryService
+from yitu.agent.models import AgentConversation, AgentMessage
 from yitu.agent.nodes import security_refusal
 from yitu.agent.privacy import redact_text
 from yitu.agent.prompts import (
@@ -186,7 +187,7 @@ class AgentConversationService:
         )
 
         history = await self._load_messages(conversation.id)
-        memories = await self._load_memories(actor.id)
+        memories = await self._load_memories(actor.id, query=content)
         refusal = security_refusal(preprocess_text(content).normalized)
         if refusal is not None:
             understanding = UnderstandingResult(
@@ -663,12 +664,11 @@ class AgentConversationService:
         await self._session.delete(conversation)
         await self._session.flush()
 
-    async def _load_memories(self, owner_id: UUID) -> list[str]:
-        rows = await self._session.scalars(
-            select(AgentMemory).where(AgentMemory.owner_id == owner_id, AgentMemory.active.is_(True))
-        )
-        now = Clock.now()
-        return [row.content for row in rows.all() if row.expires_at is None or row.expires_at > now]
+    async def _load_memories(
+        self, owner_id: UUID, query: str | None = None
+    ) -> list[str]:
+        """语义召回长期记忆：query 为当前用户消息，嵌入失败回退 recency。"""
+        return await MemoryService(self._session).recall(owner_id, query)
 
 
 def _extract_shipment_no(content: str) -> str | None:
