@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, Header, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from yitu.agent.checkpoint_store import get_shared_checkpointer
 from yitu.agent.drafts import DraftPatch, DraftService, DraftValidationView, DraftView
 from yitu.agent.grants import GrantService, GrantView
 from yitu.agent.memory import MemoryCreate, MemoryService, MemoryView
@@ -21,7 +22,7 @@ from yitu.agent.schemas import (
     MessageCreate,
     MessageView,
 )
-from yitu.agent.service import AgentConversationService, get_default_checkpointer
+from yitu.agent.service import AgentConversationService
 from yitu.agent.sse import (
     agent_message_events,
     encode_agent_event,
@@ -33,13 +34,13 @@ from yitu.platform.database import get_session
 from yitu.shipments.service import ShipmentView
 
 
-def get_checkpointer() -> Any:
-    """返回进程级单例 checkpointer，绑定草稿 loop 的跨请求 thread 状态。
+async def get_checkpointer() -> Any:
+    """返回进程级共享 checkpointer，绑定草稿 loop 的跨请求 thread 状态。
 
-    生产可替换为 AsyncPostgresSaver（langgraph-checkpoint-postgres），复用
-    PostgreSQL 持久化草稿 loop 的对话轨迹；当前业务字段已存 DB，先用内存单例。
+    生产默认 AsyncPostgresSaver（langgraph-checkpoint-postgres），多副本部署
+    通过共享 PostgreSQL 持久化草稿 loop 轨迹；memory 后端用于本地与单测。
     """
-    return get_default_checkpointer()
+    return await get_shared_checkpointer()
 
 
 router = APIRouter(prefix="/api/v1/agent/conversations", tags=["agent"])

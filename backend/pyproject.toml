@@ -20,6 +20,8 @@ dependencies = [
     "tzdata>=2025.2",
     "uvicorn>=0.34,<1",
     "langgraph>=0.4,<2",
+    "langgraph-checkpoint-postgres>=3,<4",
+    "psycopg[binary]>=3.3,<4",
 ]
 
 [dependency-groups]

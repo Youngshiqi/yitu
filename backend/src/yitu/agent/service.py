@@ -6,13 +6,13 @@ from time import monotonic
 from typing import Any
 from uuid import UUID
 
-from langgraph.checkpoint.memory import MemorySaver
 from pydantic import BaseModel
 from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yitu.addresses.models import Address
 from yitu.addresses.service import assign_region_path, list_addresses
+from yitu.agent.checkpoint_store import get_shared_checkpointer
 from yitu.agent.context import build_model_context
 from yitu.agent.draft_loop import build_draft_loop_graph
 from yitu.agent.drafts import DraftPatch, DraftService, DraftView
@@ -48,20 +48,16 @@ from yitu.platform.audit import AuditService
 from yitu.platform.clock import Clock
 from yitu.platform.errors import AppError
 
-_default_checkpointer = MemorySaver()  # 进程级单例，跨请求共享草稿 loop 的 thread 状态
-
-
-def get_default_checkpointer() -> Any:
-    """返回进程级单例 checkpointer，供 API 层依赖注入复用。"""
-    return _default_checkpointer
-
-
 async def _clear_thread(checkpointer: Any, thread_id: str) -> None:
     """清空指定 thread 的 checkpoint，让每轮草稿 loop 从干净状态开始。
 
-    当前 MemorySaver.delete_thread 为同步，未来 PostgresSaver 可能为异步，
-    这里对 awaitable 结果统一 await，保证两种实现都能复用。
+    MemorySaver 提供同步 delete_thread；AsyncPostgresSaver 提供 adelete_thread，
+    优先走异步实现，两者都不存在时静默跳过。
     """
+    async_delete = getattr(checkpointer, "adelete_thread", None)
+    if callable(async_delete):
+        await async_delete(thread_id)
+        return
     delete = getattr(checkpointer, "delete_thread", None)
     if not callable(delete):
         return
@@ -75,9 +71,8 @@ class AgentConversationService:
 
     def __init__(self, session: AsyncSession, checkpointer: Any = None) -> None:
         self._session = session
-        self._checkpointer = (
-            checkpointer if checkpointer is not None else _default_checkpointer
-        )
+        # None 表示运行期解析共享 checkpointer，由 checkpoint_store 决定后端。
+        self._checkpointer = checkpointer
 
     async def create(
         self, actor: CurrentUser, *, title: str | None = None
@@ -489,7 +484,10 @@ class AgentConversationService:
         # 草稿 loop 内部的 assistant/tool 往返只服务于单轮；跨请求上下文由 DB 的
         # history 与草稿 payload 承担。每轮先清空该 thread 的 checkpoint，避免上一轮
         # 的 draft_turns 经 add reducer 累积进本轮、覆盖掉新的 user_message。
-        await _clear_thread(self._checkpointer, thread_id)
+        checkpointer = self._checkpointer
+        if checkpointer is None:
+            checkpointer = await get_shared_checkpointer()
+        await _clear_thread(checkpointer, thread_id)
         loop_state: AgentState = {
             "conversation_id": str(conversation_id),
             "user_id": str(actor.id),
@@ -512,7 +510,7 @@ class AgentConversationService:
             actor=actor,
             session=self._session,
             addresses=addresses,
-            checkpointer=self._checkpointer,
+            checkpointer=checkpointer,
         ).ainvoke(
             loop_state,
             config={"configurable": {"thread_id": thread_id}},

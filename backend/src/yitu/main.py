@@ -1,6 +1,13 @@
+import asyncio
+import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from uuid import uuid4
+
+# psycopg（LangGraph AsyncPostgresSaver）在 Windows 上要求 SelectorEventLoop，
+# 本项目无 asyncio 子进程依赖，切策略安全；Linux 部署不受影响。
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
@@ -60,6 +67,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        from yitu.agent.checkpoint_store import dispose_checkpointer
+
+        await dispose_checkpointer()
         await dispose_database()
 
 

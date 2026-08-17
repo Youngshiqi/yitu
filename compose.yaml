@@ -64,6 +64,7 @@ services:
       YITU_AGENT_MODEL_API_KEY: ${YITU_AGENT_MODEL_API_KEY:-}
       YITU_AGENT_MODEL_NAME: ${YITU_AGENT_MODEL_NAME:-}
       YITU_AGENT_MODEL_TIMEOUT_SECONDS: ${YITU_AGENT_MODEL_TIMEOUT_SECONDS:-60}
+      YITU_AGENT_CHECKPOINTER_BACKEND: ${YITU_AGENT_CHECKPOINTER_BACKEND:-postgres}
     command: >-
       sh -c ".venv/bin/alembic upgrade head &&
       .venv/bin/uvicorn yitu.main:create_app --factory

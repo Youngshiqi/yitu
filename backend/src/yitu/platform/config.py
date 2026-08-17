@@ -39,6 +39,8 @@ class Settings(BaseSettings):
     agent_model_api_key: str | None = None
     agent_model_name: str = ""
     agent_model_timeout_seconds: float = 60.0
+    # 多副本部署必须用 postgres 共享草稿 loop 状态；memory 仅用于本地与单测。
+    agent_checkpointer_backend: Literal["postgres", "memory"] = "postgres"
     payment_provider: Literal["mock", "alipay_sandbox", "alipay"] = "mock"
     alipay_app_id: str | None = None
     alipay_private_key: str | None = None
