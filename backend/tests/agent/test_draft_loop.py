@@ -22,7 +22,11 @@ from yitu.agent.model_adapter import (
 from yitu.agent.prompts import BUDGET_REFUSAL
 from yitu.agent.service import _clear_thread
 from yitu.agent.state import AgentState
-from yitu.agent.tools.drafts import _match_address_label, execute_update_draft
+from yitu.agent.tools.drafts import (
+    _match_address_label,
+    execute_request_address,
+    execute_update_draft,
+)
 from yitu.identity.models import Role
 from yitu.identity.service import CurrentUser
 
@@ -274,3 +278,40 @@ async def test_draft_loop_clears_thread_between_turns() -> None:
     # 对照：不清空时 add reducer 会跨请求累积，证明 _clear_thread 确有拦截作用。
     third = await graph.ainvoke(_loop_state(conversation_id=thread_id), config=config)
     assert len(third["draft_turns"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_draft_loop_request_address_sets_pending_signal() -> None:
+    model = LoopModel(
+        [
+            ToolCallResult(
+                content=None,
+                tool_calls=(
+                    ToolCall(
+                        id="call_1",
+                        name="request_address",
+                        arguments={"role": "receiver"},
+                    ),
+                ),
+            ),
+            ToolCallResult(content="请在弹窗里补充收件地址。", tool_calls=()),
+        ]
+    )
+    graph = _build_graph(model)
+
+    result = await graph.ainvoke(_loop_state())
+
+    assert result["draft_response"] == "请在弹窗里补充收件地址。"
+    assert result["pending_address"] == {"role": "receiver"}
+    turns = result["draft_turns"]
+    assert len(turns) == 3
+    assert turns[0]["role"] == "assistant" and turns[0].get("tool_calls")
+    assert turns[1]["role"] == "tool"
+    assert turns[2]["role"] == "assistant" and not turns[2].get("tool_calls")
+
+
+def test_execute_request_address_requires_valid_role() -> None:
+    assert execute_request_address({"role": "sender"}) == {"role": "sender"}
+    assert execute_request_address({"role": "receiver"}) == {"role": "receiver"}
+    with pytest.raises(ValueError):
+        execute_request_address({"role": "courier"})

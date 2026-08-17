@@ -49,3 +49,19 @@ class AgentTurnView(BaseModel):
 
     user_message: MessageView
     assistant_message: MessageView
+
+
+class DraftAddressCreate(BaseModel):
+    """草稿对话中前端表单提交的收寄地址：是否保存 + 完整地址字段。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    role: Literal["sender", "receiver"]
+    save: bool
+    label: str | None = Field(default=None, max_length=32)
+    recipient_name: str = Field(min_length=1, max_length=128)
+    phone: str = Field(min_length=1, max_length=32)
+    province_region_id: UUID
+    city_region_id: UUID
+    district_region_id: UUID
+    detail: str = Field(min_length=1, max_length=256)

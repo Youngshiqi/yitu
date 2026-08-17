@@ -12,7 +12,11 @@ from yitu.agent.model_adapter import ModelAdapter, ModelMessage, ToolCall
 from yitu.agent.nodes import _budget_refusal
 from yitu.agent.prompts import DRAFT_LOOP_PROMPT
 from yitu.agent.state import AgentState
-from yitu.agent.tools.drafts import UPDATE_DRAFT_TOOL_SPECS, execute_update_draft
+from yitu.agent.tools.drafts import (
+    UPDATE_DRAFT_TOOL_SPECS,
+    execute_request_address,
+    execute_update_draft,
+)
 from yitu.identity.service import CurrentUser
 
 
@@ -85,6 +89,7 @@ def draft_tools_node(
         calls = _as_call_list(turns[-1].get("tool_calls"))
         conversation_id = UUID(str(state["conversation_id"]))
         results: list[dict[str, object]] = []
+        pending_address: dict[str, object] | None = None
         for call in calls:
             name = call.get("name")
             arguments = call.get("arguments")
@@ -94,6 +99,9 @@ def draft_tools_node(
                 content = await execute_update_draft(
                     session, actor, addresses, conversation_id, arguments
                 )
+            elif name == "request_address":
+                pending_address = execute_request_address(arguments)
+                content = "已请求用户在前端补充地址。"
             else:
                 content = f"未知工具：{name}"
             results.append(
@@ -103,7 +111,10 @@ def draft_tools_node(
                     "tool_call_id": call.get("id"),
                 }
             )
-        return {"draft_turns": results}
+        update: AgentState = {"draft_turns": results}
+        if pending_address is not None:
+            update["pending_address"] = pending_address
+        return update
 
     return _tools
 

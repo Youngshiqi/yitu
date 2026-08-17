@@ -17,6 +17,7 @@ from yitu.agent.schemas import (
     AgentTurnView,
     ConversationCreate,
     ConversationView,
+    DraftAddressCreate,
     MessageCreate,
     MessageView,
 )
@@ -122,6 +123,14 @@ async def get_draft(conversation_id: UUID, user: CurrentUser = _current_user, se
 async def update_draft(conversation_id: UUID, request: DraftPatch, user: CurrentUser = _current_user, session: AsyncSession = _session) -> DraftView:
     await AgentConversationService(session).get_owned(conversation_id, user)
     result = await DraftService(session).update(conversation_id, user, request)
+    await session.commit()
+    return result
+
+
+@router.post("/{conversation_id}/draft/address", response_model=DraftView)
+async def save_draft_address(conversation_id: UUID, request: DraftAddressCreate, user: CurrentUser = _current_user, session: AsyncSession = _session) -> DraftView:
+    """创建草稿用收寄地址（保存或临时），并回填草稿地址与区县代码。"""
+    result = await AgentConversationService(session).save_draft_address(conversation_id, user, request)
     await session.commit()
     return result
 

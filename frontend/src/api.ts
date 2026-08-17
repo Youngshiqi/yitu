@@ -24,6 +24,7 @@ export type AdminStation = { id: string; code: string; name: string; district_co
 export type StationInput = { code: string; name: string; district_region_id: string; service_areas: Array<{ district_region_id: string; service_types: ServiceType[] }> }
 export type Address = { id: string; label?: string; recipient_name: string; phone: string; province_region_id: string; province_name: string; city_region_id: string; city_name: string; district_region_id: string; district_name: string; district_code: string; detail: string; full_address: string }
 export type AddressInput = { label?: string; recipient_name: string; phone: string; province_region_id: string; city_region_id: string; district_region_id: string; detail: string }
+export type DraftAddressInput = { role: 'sender' | 'receiver'; save: boolean } & AddressInput
 export type Notification = { id: string; template_code: string; template_data: Record<string, unknown>; title: string; content: string; status: string; created_at: string; read_at?: string }
 export type AgentConversation = { id: string; title?: string; status: string; created_at: string; updated_at: string }
 export type AgentMessage = { id: string; conversation_id: string; role: 'user' | 'assistant' | 'tool' | 'system'; content: string; envelope?: Record<string, unknown>; created_at: string }
@@ -143,6 +144,7 @@ export async function* streamAgentMessage(id: string, content: string): AsyncGen
   }
 }
 export async function getAgentDraft(id: string) { return (await http.get(`/agent/conversations/${id}/draft`)).data }
+export async function saveAgentDraftAddress(id: string, payload: DraftAddressInput) { return (await http.post(`/agent/conversations/${id}/draft/address`, payload)).data }
 export async function validateAgentDraft(id: string) { return (await http.post(`/agent/conversations/${id}/draft/validate`)).data }
 export async function issueAgentGrant(id: string) { return (await http.post(`/agent/conversations/${id}/grant`)).data }
 export async function consumeAgentGrant(id: string) { return (await http.post(`/agent/conversations/grants/${id}/consume`)).data }

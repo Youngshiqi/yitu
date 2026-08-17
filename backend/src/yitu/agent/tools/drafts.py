@@ -1,5 +1,6 @@
 """草稿填写 agentic loop 的 update_draft 工具：白名单参数 + 确定性落库。"""
 
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -27,6 +28,14 @@ class UpdateDraftToolArgs(BaseModel):
     special_instructions: str | None = Field(default=None, max_length=2000)
 
 
+class RequestAddressToolArgs(BaseModel):
+    """请求前端收集地址簿外的新地址；一次只请求寄件或收件其一。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    role: Literal["sender", "receiver"]
+
+
 UPDATE_DRAFT_TOOL_SPECS: tuple[dict[str, object], ...] = (
     {
         "type": "function",
@@ -39,7 +48,25 @@ UPDATE_DRAFT_TOOL_SPECS: tuple[dict[str, object], ...] = (
             "parameters": UpdateDraftToolArgs.model_json_schema(),
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "request_address",
+            "description": (
+                "用户给出的寄件或收件地址不在地址簿标签列表中时，请求前端"
+                "弹出地址表单让用户补齐完整地址并确认是否保存。不要追问标签，"
+                "也不要生成地址 ID。"
+            ),
+            "parameters": RequestAddressToolArgs.model_json_schema(),
+        },
+    },
 )
+
+
+def execute_request_address(arguments: dict[str, object]) -> dict[str, object]:
+    """生成 pending_address 信号，不落库；实际地址由前端表单提交后保存。"""
+    args = RequestAddressToolArgs.model_validate(arguments)
+    return {"role": args.role}
 
 
 async def execute_update_draft(

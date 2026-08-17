@@ -28,9 +28,10 @@ async def get_owned_address(session: AsyncSession, address_id: UUID, user: Curre
     return address
 
 async def list_addresses(session: AsyncSession, user: CurrentUser) -> list[Address]:
+    """返回正式地址簿条目，过滤掉下单用的一次性临时地址。"""
     result = await session.scalars(
         select(Address)
-        .where(Address.owner_id == user.id)
+        .where(Address.owner_id == user.id, Address.ephemeral.is_(False))
         .options(
             selectinload(Address.province_region),
             selectinload(Address.city_region),

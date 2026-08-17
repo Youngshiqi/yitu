@@ -1,7 +1,7 @@
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
-from sqlalchemy import ForeignKey, String
+from sqlalchemy import Boolean, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from yitu.platform.models import Base
@@ -30,6 +30,9 @@ class Address(Base):
     )
     district_code: Mapped[str] = mapped_column(String(12), nullable=False)
     detail: Mapped[str] = mapped_column(String(256), nullable=False)
+    ephemeral: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
 
     province_region: Mapped["AdministrativeRegion"] = relationship(
         foreign_keys=[province_region_id]

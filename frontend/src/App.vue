@@ -3,7 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowRight, Bell, Box, ChatDotRound, Delete, Edit, Expand, Fold, Location, Plus, Search, Setting, User } from '@element-plus/icons-vue'
 import MarkdownIt from 'markdown-it'
-import { consumeAgentGrant, createAddress, createConversation, createQuote, createShipment, deleteAddress, deleteConversation, getAgentDraft, getQuote, getShipment, issueAgentGrant, listAddresses, listConversations, listMessages, listNotifications, listRegions, listShipments, login, markNotificationRead, me, payQuote, paySupplement, streamAgentMessage, tracking, updateAddress, validateAgentDraft, type Address, type AddressInput, type AgentConversation, type AgentMessage, type Notification, type Region, type Shipment, type ShipmentDetail } from './api'
+import { consumeAgentGrant, createAddress, createConversation, createQuote, createShipment, deleteAddress, deleteConversation, getAgentDraft, getQuote, getShipment, issueAgentGrant, listAddresses, listConversations, listMessages, listNotifications, listRegions, listShipments, login, markNotificationRead, me, payQuote, paySupplement, saveAgentDraftAddress, streamAgentMessage, tracking, updateAddress, validateAgentDraft, type Address, type AddressInput, type AgentConversation, type AgentMessage, type Notification, type Region, type Shipment, type ShipmentDetail } from './api'
 import StationOperatorWorkspace from './StationOperatorWorkspace.vue'
 import CourierWorkspace from './CourierWorkspace.vue'
 import OperationsWorkspace from './OperationsWorkspace.vue'
@@ -34,6 +34,8 @@ const addressDialog = ref(false)
 const emptyAddress = (): AddressInput => ({ label: '常用地址', recipient_name: '', phone: '', province_region_id: '', city_region_id: '', district_region_id: '', detail: '' })
 const addressForm = ref<AddressInput>(emptyAddress())
 const editingAddressId = ref<string | null>(null)
+const pendingAddressRole = ref<'sender' | 'receiver' | null>(null)
+const saveAddressToBook = ref(true)
 const provinces = ref<Region[]>([])
 const cities = ref<Region[]>([])
 const districts = ref<Region[]>([])
@@ -186,10 +188,31 @@ async function saveAddress() {
   const form = addressForm.value
   if (!form.recipient_name || !form.phone || !form.province_region_id || !form.city_region_id || !form.district_region_id || !form.detail) { ElMessage.warning('请完整填写联系人、省市区和详细地址'); return }
   try {
-    if (editingAddressId.value) await updateAddress(editingAddressId.value, form)
-    else await createAddress(form)
-    addressDialog.value = false; await loadData(); ElMessage.success(editingAddressId.value ? '地址已更新' : '地址已保存')
+    if (pendingAddressRole.value && activeConversation.value?.id) {
+      const role = pendingAddressRole.value
+      const save = saveAddressToBook.value
+      await saveAgentDraftAddress(activeConversation.value.id, { role, save, ...form })
+      agentDraft.value = await getAgentDraft(activeConversation.value.id)
+      pendingAddressRole.value = null
+      ElMessage.success(save ? '地址已保存并填入草稿' : '已使用该地址（不保存到地址簿）')
+      if (save) await loadData()
+    } else if (editingAddressId.value) {
+      await updateAddress(editingAddressId.value, form)
+      ElMessage.success('地址已更新')
+    } else {
+      await createAddress(form)
+      ElMessage.success('地址已保存')
+      await loadData()
+    }
+    addressDialog.value = false
   } catch (error: any) { ElMessage.error(error.response?.data?.message || '地址保存失败') }
+}
+function maybePromptForAddress(message: AgentMessage) {
+  const pending = message.envelope?.pending_address as { role?: unknown } | undefined
+  if (!pending || (pending.role !== 'sender' && pending.role !== 'receiver') || !activeConversation.value?.id) return
+  pendingAddressRole.value = pending.role
+  saveAddressToBook.value = true
+  openAddressDialog()
 }
 async function submitShipment() {
   const form = shipmentForm.value
@@ -280,6 +303,7 @@ async function sendMessage() {
         const index = agentMessages.value.findIndex(item => item.id === temporaryAssistantId)
         if (index >= 0) agentMessages.value[index] = event.data
         completed = true
+        maybePromptForAddress(event.data)
       } else {
         throw new Error(event.data.message)
       }
@@ -339,7 +363,7 @@ onBeforeUnmount(() => window.removeEventListener('yitu-auth-expired', handleAuth
         <div v-else class="page-block"><el-button text @click="view = 'shipments'">← 返回运单</el-button><div v-if="selected?.shipment" class="detail-layout"><div class="detail-main"><p class="section-kicker">SHIPMENT DETAIL</p><h2>{{ selected.shipment.shipment_no }}</h2><el-tag type="primary">{{ statusMap[selected.shipment.status] || selected.shipment.status }}</el-tag><div class="route-summary"><div><small>寄件信息</small><strong>{{ selected.sender_address?.recipient_name || '未提供' }}</strong><p>{{ selected.sender_address?.full_address || '暂无寄件地址' }}</p></div><ArrowRight /><div><small>收件信息</small><strong>{{ selected.receiver_address?.recipient_name || '未提供' }}</strong><p>{{ selected.receiver_address?.full_address || '暂无收件地址' }}</p></div></div><div v-if="selected.package" class="package-summary"><div><small>托寄物</small><strong>{{ selected.package.category }}</strong><p>{{ selected.package.description }}</p></div><div><small>预估重量</small><strong>{{ (selected.package.estimated_weight_grams / 1000).toFixed(2) }} kg</strong><p>{{ selected.package.estimated_length_cm }} × {{ selected.package.estimated_width_cm }} × {{ selected.package.estimated_height_cm }} cm</p></div><div><small>运费</small><strong>¥{{ ((selected.quote?.total_cents || 0) / 100).toFixed(2) }}</strong><p>{{ selected.shipment.status === 'PENDING_PAYMENT' ? '待支付' : `已支付 ¥${(selected.paid_total_cents / 100).toFixed(2)}` }}</p><div v-if="selected.quote?.fee_items?.length" class="fee-breakdown"><span v-for="item in selected.quote.fee_items" :key="item.code">{{ feeItemLabel(item.code) }}：¥{{ (item.amount_cents / 100).toFixed(2) }}</span></div></div></div><div class="timeline"><div v-for="event in timeline" :key="event.id" class="timeline-item"><div class="timeline-dot"></div><div class="timeline-content"><span class="timeline-text">{{ renderTrackingMessage(event.message) }}</span><time>{{ new Date(event.occurred_at).toLocaleString('zh-CN') }}</time></div></div><el-empty v-if="!timeline.length" description="暂无轨迹" /></div></div></div><el-empty v-else description="暂无运单详情" /></div>
       </section>
     </main>
-    <el-dialog v-model="addressDialog" :title="editingAddressId ? '编辑地址' : '新增地址'" width="560px"><el-form label-position="top" v-loading="regionLoading"><div class="form-grid"><el-form-item label="标签"><el-input v-model="addressForm.label" placeholder="例如：家、公司" /></el-form-item><el-form-item label="联系人"><el-input v-model="addressForm.recipient_name" /></el-form-item></div><el-form-item label="手机号"><el-input v-model="addressForm.phone" /></el-form-item><div class="region-grid"><el-form-item label="省"><el-select v-model="addressForm.province_region_id" filterable placeholder="请选择省份" @change="changeProvince"><el-option v-for="item in provinces" :key="item.id" :label="item.name" :value="item.id" /></el-select></el-form-item><el-form-item label="市"><el-select v-model="addressForm.city_region_id" filterable placeholder="请选择城市" :disabled="!addressForm.province_region_id" @change="changeCity"><el-option v-for="item in cities" :key="item.id" :label="item.name" :value="item.id" /></el-select></el-form-item><el-form-item label="区 / 县"><el-select v-model="addressForm.district_region_id" filterable placeholder="请选择区县" :disabled="!addressForm.city_region_id"><el-option v-for="item in districts" :key="item.id" :label="item.name" :value="item.id" /></el-select></el-form-item></div><el-form-item label="详细地址"><el-input v-model="addressForm.detail" type="textarea" :rows="2" placeholder="街道、门牌号、小区及楼栋信息" /></el-form-item></el-form><template #footer><el-button @click="addressDialog = false">取消</el-button><el-button type="primary" @click="saveAddress">{{ editingAddressId ? '保存修改' : '保存地址' }}</el-button></template></el-dialog>
+    <el-dialog v-model="addressDialog" :title="pendingAddressRole ? (pendingAddressRole === 'sender' ? '补充寄件地址' : '补充收件地址') : (editingAddressId ? '编辑地址' : '新增地址')" width="560px"><el-form label-position="top" v-loading="regionLoading"><div class="form-grid"><el-form-item label="标签"><el-input v-model="addressForm.label" placeholder="例如：家、公司" /></el-form-item><el-form-item label="联系人"><el-input v-model="addressForm.recipient_name" /></el-form-item></div><el-form-item label="手机号"><el-input v-model="addressForm.phone" /></el-form-item><div class="region-grid"><el-form-item label="省"><el-select v-model="addressForm.province_region_id" filterable placeholder="请选择省份" @change="changeProvince"><el-option v-for="item in provinces" :key="item.id" :label="item.name" :value="item.id" /></el-select></el-form-item><el-form-item label="市"><el-select v-model="addressForm.city_region_id" filterable placeholder="请选择城市" :disabled="!addressForm.province_region_id" @change="changeCity"><el-option v-for="item in cities" :key="item.id" :label="item.name" :value="item.id" /></el-select></el-form-item><el-form-item label="区 / 县"><el-select v-model="addressForm.district_region_id" filterable placeholder="请选择区县" :disabled="!addressForm.city_region_id"><el-option v-for="item in districts" :key="item.id" :label="item.name" :value="item.id" /></el-select></el-form-item></div><el-form-item label="详细地址"><el-input v-model="addressForm.detail" type="textarea" :rows="2" placeholder="街道、门牌号、小区及楼栋信息" /></el-form-item><el-form-item v-if="pendingAddressRole"><el-checkbox v-model="saveAddressToBook">保存到地址簿，下次直接选择</el-checkbox></el-form-item></el-form><template #footer><el-button @click="addressDialog = false">取消</el-button><el-button type="primary" @click="saveAddress">{{ pendingAddressRole ? '确认' : (editingAddressId ? '保存修改' : '保存地址') }}</el-button></template></el-dialog>
   </div>
 </template>
 

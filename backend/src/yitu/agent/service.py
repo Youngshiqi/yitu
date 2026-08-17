@@ -12,7 +12,7 @@ from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yitu.addresses.models import Address
-from yitu.addresses.service import list_addresses
+from yitu.addresses.service import assign_region_path, list_addresses
 from yitu.agent.context import build_model_context
 from yitu.agent.draft_loop import build_draft_loop_graph
 from yitu.agent.drafts import DraftPatch, DraftService, DraftView
@@ -26,7 +26,7 @@ from yitu.agent.prompts import (
     KNOWLEDGE_ANSWER_PROMPT,
     KNOWLEDGE_NOT_FOUND_REPLY,
 )
-from yitu.agent.schemas import AgentTurnView, MessageView
+from yitu.agent.schemas import AgentTurnView, DraftAddressCreate, MessageView
 from yitu.agent.state import AgentState
 from yitu.agent.tools.base import ToolContext, ToolResult
 from yitu.agent.tools.identity import AddressBookTool, IdentityTool
@@ -229,6 +229,7 @@ class AgentConversationService:
 
         route = graph_result.get("route")
         tool_result: ToolResult[BaseModel] | None = None
+        pending_address: dict[str, object] | None = None
         history_messages = [
             ModelMessage(role=item.role, content=item.content) for item in history
         ]
@@ -293,16 +294,15 @@ class AgentConversationService:
                 )
                 trace.record("tool.identity", found=tool_result.found)
             elif route == "draft":
-                reply_parts.append(
-                    await self._run_draft_loop(
-                        conversation.id,
-                        actor,
-                        content,
-                        history_messages,
-                        addresses,
-                        model,
-                    )
+                draft_reply, pending_address = await self._run_draft_loop(
+                    conversation.id,
+                    actor,
+                    content,
+                    history_messages,
+                    addresses,
+                    model,
                 )
+                reply_parts.append(draft_reply)
                 trace.record("draft.loop_completed")
             elif route == "respond" and understanding.clarification_question:
                 reply_parts.append(understanding.clarification_question)
@@ -358,6 +358,7 @@ class AgentConversationService:
                 "tool_result": tool_result.model_dump(mode="json")
                 if tool_result is not None
                 else None,
+                "pending_address": pending_address,
                 "trace": trace.summary(),
             },
             created_at=Clock.now(),
@@ -478,8 +479,11 @@ class AgentConversationService:
         history: list[ModelMessage],
         addresses: list[Address],
         model: ModelAdapter,
-    ) -> str:
-        """把草稿填写交给 agentic loop：模型通过 update_draft 增量填字段。"""
+    ) -> tuple[str, dict[str, object] | None]:
+        """把草稿填写交给 agentic loop：模型通过 update_draft 增量填字段。
+
+        返回 (回复文本, 地址簿外新地址的收集信号)；无新地址时信号为 None。
+        """
         draft = await DraftService(self._session).get_or_create(conversation_id, actor)
         thread_id = str(conversation_id)
         # 草稿 loop 内部的 assistant/tool 往返只服务于单轮；跨请求上下文由 DB 的
@@ -513,7 +517,48 @@ class AgentConversationService:
             loop_state,
             config={"configurable": {"thread_id": thread_id}},
         )
-        return result.get("draft_response") or BUDGET_REFUSAL
+        return (
+            result.get("draft_response") or BUDGET_REFUSAL,
+            result.get("pending_address"),
+        )
+
+    async def save_draft_address(
+        self,
+        conversation_id: UUID,
+        actor: CurrentUser,
+        payload: DraftAddressCreate,
+    ) -> DraftView:
+        """创建草稿用收寄地址（保存或临时），并回填草稿地址与区县代码。"""
+        await self.get_owned(conversation_id, actor)
+        address = Address(
+            owner_id=actor.id,
+            label=payload.label if payload.save else None,
+            recipient_name=payload.recipient_name,
+            phone=payload.phone,
+            detail=payload.detail,
+            ephemeral=not payload.save,
+        )
+        await assign_region_path(
+            self._session,
+            address,
+            payload.province_region_id,
+            payload.city_region_id,
+            payload.district_region_id,
+        )
+        self._session.add(address)
+        await self._session.flush()
+        patch = DraftPatch(
+            sender_address_id=address.id if payload.role == "sender" else None,
+            receiver_address_id=address.id if payload.role == "receiver" else None,
+            origin_district_code=(
+                address.district_code if payload.role == "sender" else None
+            ),
+            destination_district_code=(
+                address.district_code if payload.role == "receiver" else None
+            ),
+        )
+        draft = await DraftService(self._session).update(conversation_id, actor, patch)
+        return draft
 
     async def _update_draft_from_understanding(
         self,
