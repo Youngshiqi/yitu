@@ -595,9 +595,9 @@ class AgentConversationService:
                 conversation_id, actor
             )
         except AppError:
-            return "报价暂不可用，请稍后重试。"
+            return "报价暂时算不出来，稍后再试一下哦。"
         total = validation.quote.total_cents / 100
-        return f"本次运费预计 {total:.2f} 元。回复「确认」即可创建运单。"
+        return f"寄件信息都齐啦，本次运费预计 {total:.2f} 元，回复「确认」就可以下单了～"
 
     async def _confirm_shipment(
         self, conversation_id: UUID, actor: CurrentUser, trace_id: str
@@ -605,7 +605,7 @@ class AgentConversationService:
         """用户整句确认后，签发并消费一次性授权，在同一事务创建运单。"""
         draft = await DraftService(self._session).get_or_create(conversation_id, actor)
         if draft.status != "READY_FOR_CONFIRMATION":
-            return "当前还没有可确认的报价，请先补齐寄件信息。"
+            return "还没有可确认的报价哦，先告诉我寄件信息，我来帮你补齐～"
         grant = await GrantService(self._session).issue(conversation_id, actor)
         shipment = await AgentWriteService(self._session).create_shipment(
             grant.id, actor, trace_id
@@ -619,11 +619,11 @@ class AgentConversationService:
         if pending_save:
             draft.payload = {**draft.payload, "pending_save_address_ids": pending_save}
         reply = (
-            f"运单已创建，运单号 {shipment.shipment_no}，"
-            f"待支付 {quote.total_cents / 100:.2f} 元。请前往运单详情完成支付。"
+            f"太好啦，运单已经创建好咯！运单号 {shipment.shipment_no}，"
+            f"待支付 {quote.total_cents / 100:.2f} 元，前往运单详情完成支付就可以啦。"
         )
         if pending_save:
-            reply += "本次寄件使用了新地址，需要保存到地址簿吗？回复「保存」即可。"
+            reply += "对了，这次寄件用了一个新地址，要不要帮你也存进地址簿？以后寄件直接选就行，回复「保存」就可以啦。"
         return reply
 
     async def _ephemeral_address_ids(self, draft: AgentShipmentDraft) -> list[str]:
@@ -682,7 +682,7 @@ class AgentConversationService:
                 "primary_intent": "GENERAL_CHAT",
                 "confidence": 1.0,
                 "recognition_path": "RULE",
-                "clarification_question": "已保存到地址簿，下次寄件可直接选择。",
+                "clarification_question": "已保存到地址簿啦，下次寄件直接选就行～",
             }
         )
 
