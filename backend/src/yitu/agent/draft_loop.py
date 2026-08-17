@@ -1,5 +1,6 @@
 """草稿填写 agentic loop：模型通过 update_draft 工具增量填字段 + 主动追问。"""
 
+import asyncio
 from typing import Any, cast
 from uuid import UUID
 
@@ -8,7 +9,7 @@ from langgraph.graph.state import CompiledStateGraph
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yitu.addresses.models import Address
-from yitu.agent.model_adapter import ModelAdapter, ModelMessage, ToolCall
+from yitu.agent.model_adapter import ModelAdapter, ModelMessage, ToolCall, ToolStreamEvent
 from yitu.agent.nodes import _budget_refusal
 from yitu.agent.prompts import DRAFT_LOOP_PROMPT
 from yitu.agent.state import AgentState
@@ -27,10 +28,15 @@ def build_draft_loop_graph(
     session: AsyncSession,
     addresses: list[Address],
     checkpointer: Any = None,
+    stream_queue: asyncio.Queue[str] | None = None,
 ) -> CompiledStateGraph[AgentState, None, AgentState, AgentState]:
-    """构建草稿填写子图：draft_agent ⇄ draft_tools 循环，无工具调用时结束。"""
+    """构建草稿填写子图：draft_agent ⇄ draft_tools 循环，无工具调用时结束。
+
+    stream_queue 非 None 时，draft_agent 节点用 stream_with_tools 流式输出
+    内容增量到队列，供外层 SSE 转发；为 None 时退回 complete_with_tools。
+    """
     graph = StateGraph(AgentState)
-    graph.add_node("draft_agent", draft_agent_node(model))
+    graph.add_node("draft_agent", draft_agent_node(model, stream_queue))
     graph.add_node("draft_tools", draft_tools_node(session, actor, addresses))
     graph.add_edge(START, "draft_agent")
     graph.add_conditional_edges(
@@ -42,16 +48,37 @@ def build_draft_loop_graph(
     return graph.compile(checkpointer=checkpointer)
 
 
-def draft_agent_node(model: ModelAdapter) -> Any:
-    """让模型决定：调用 update_draft 填字段，或返回纯文本（追问/完成）。"""
+def draft_agent_node(
+    model: ModelAdapter,
+    stream_queue: asyncio.Queue[str] | None = None,
+) -> Any:
+    """让模型决定：调用 update_draft 填字段，或返回纯文本（追问/完成）。
+
+    stream_queue 非 None 时用流式接口，内容增量即时推入队列。
+    """
 
     async def _agent(state: AgentState) -> AgentState:
         refusal = _budget_refusal(state)
         if refusal is not None:
+            if stream_queue is not None:
+                await stream_queue.put(refusal)
             return {"draft_response": refusal}
         turns = list(state.get("draft_turns", []))
         messages = _turns_to_messages(turns) if turns else _initial_messages(state)
-        result = await model.complete_with_tools(messages, UPDATE_DRAFT_TOOL_SPECS)
+
+        if stream_queue is not None:
+            content_parts: list[str] = []
+            final_result = None
+            async for event in model.stream_with_tools(messages, UPDATE_DRAFT_TOOL_SPECS):
+                if event.delta:
+                    content_parts.append(event.delta)
+                    await stream_queue.put(event.delta)
+                if event.result is not None:
+                    final_result = event.result
+            result = final_result  # type: ignore[assignment]
+        else:
+            result = await model.complete_with_tools(messages, UPDATE_DRAFT_TOOL_SPECS)
+
         assistant: dict[str, object] = {
             "role": "assistant",
             "content": result.content or "",

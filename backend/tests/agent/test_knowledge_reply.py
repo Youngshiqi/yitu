@@ -7,7 +7,12 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import delete
 
-from yitu.agent.model_adapter import ModelMessage, StructuredT, ToolCallResult
+from yitu.agent.model_adapter import (
+    ModelMessage,
+    StructuredT,
+    ToolCallResult,
+    ToolStreamEvent,
+)
 from yitu.agent.models import AgentConversation
 from yitu.agent.prompts import KNOWLEDGE_ANSWER_PROMPT, KNOWLEDGE_NOT_FOUND_REPLY
 from yitu.agent.service import (
@@ -56,12 +61,11 @@ class RecordingAdapter:
 
     def __init__(self) -> None:
         self.last_messages: list[ModelMessage] | None = None
-        self.complete_calls = 0
+        self.stream_calls = 0
 
     async def complete(self, messages: Sequence[ModelMessage]) -> str:
-        self.complete_calls += 1
-        self.last_messages = list(messages)
-        return "已生成回答"
+        del messages
+        raise AssertionError("知识回复阶段应使用流式接口")
 
     async def complete_structured(
         self, messages: Sequence[ModelMessage], response_model: type[StructuredT]
@@ -75,18 +79,31 @@ class RecordingAdapter:
         del messages, tools
         raise AssertionError("知识回复阶段不应调用工具循环")
 
-    def stream(self, messages: Sequence[ModelMessage]) -> AsyncIterator[str]:
-        del messages
-        raise AssertionError("知识回复阶段不应流式输出")
+    async def stream(self, messages: Sequence[ModelMessage]) -> AsyncIterator[str]:
+        self.stream_calls += 1
+        self.last_messages = list(messages)
+        yield "已生成回答"
+
+    async def stream_with_tools(
+        self, messages: Sequence[ModelMessage], tools: Sequence[dict[str, object]]
+    ) -> AsyncIterator[ToolStreamEvent]:
+        del messages, tools
+        raise AssertionError("知识回复阶段不应调用工具流式接口")
 
 
 @pytest.mark.asyncio
 async def test_knowledge_reply_injects_evidence_and_prompt() -> None:
     adapter = RecordingAdapter()
     service = AgentConversationService(session=SimpleNamespace())  # type: ignore[arg-type]
-    reply = await service._knowledge_reply(adapter, [], [], [_citation()])
+    chunks = [
+        chunk
+        async for chunk in service._stream_knowledge_reply(
+            adapter, [], [], [_citation()]
+        )
+    ]
 
-    assert reply == "已生成回答"
+    assert "".join(chunks) == "已生成回答"
+    assert adapter.stream_calls == 1
     assert adapter.last_messages is not None
     joined = "\n".join(message.content for message in adapter.last_messages)
     assert "【知识证据】" in joined
@@ -132,6 +149,12 @@ class ScriptedKnowledgeModel:
                 yield ""
 
         return empty()
+
+    async def stream_with_tools(
+        self, messages: Sequence[ModelMessage], tools: Sequence[dict[str, object]]
+    ) -> AsyncIterator[ToolStreamEvent]:
+        del messages, tools
+        raise AssertionError("知识查询不应进入草稿工具循环")
 
 
 @pytest.mark.asyncio

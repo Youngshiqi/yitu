@@ -39,6 +39,17 @@ class ToolCallResult:
 
 
 @dataclass(frozen=True, slots=True)
+class ToolStreamEvent:
+    """stream_with_tools 产出的流式事件：内容增量或最终结果。
+
+    delta 非空时为内容增量；result 非 None 时为最终结果（仅最后一个事件）。
+    """
+
+    delta: str = ""
+    result: ToolCallResult | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class ModelMessage:
     """发送给模型的最小消息结构。"""
 
@@ -66,6 +77,12 @@ class ModelAdapter(Protocol):
     ) -> ToolCallResult: ...
 
     def stream(self, messages: Sequence[ModelMessage]) -> AsyncIterator[str]: ...
+
+    def stream_with_tools(
+        self,
+        messages: Sequence[ModelMessage],
+        tools: Sequence[dict[str, object]],
+    ) -> AsyncIterator[ToolStreamEvent]: ...
 
 
 class ModelUnavailableError(RuntimeError):
@@ -108,6 +125,16 @@ class FixedModelAdapter:
 
     async def stream(self, messages: Sequence[ModelMessage]) -> AsyncIterator[str]:
         yield await self.complete(messages)
+
+    async def stream_with_tools(
+        self,
+        messages: Sequence[ModelMessage],
+        tools: Sequence[dict[str, object]],
+    ) -> AsyncIterator[ToolStreamEvent]:
+        result = await self.complete_with_tools(messages, tools)
+        if result.content:
+            yield ToolStreamEvent(delta=result.content)
+        yield ToolStreamEvent(result=result)
 
 
 class OpenAICompatibleModelAdapter:
@@ -315,6 +342,87 @@ class OpenAICompatibleModelAdapter:
             OpenAIError,
         ):
             raise ModelUnavailableError("Agent model is unavailable") from None
+
+    async def stream_with_tools(
+        self,
+        messages: Sequence[ModelMessage],
+        tools: Sequence[dict[str, object]],
+    ) -> AsyncIterator[ToolStreamEvent]:
+        """流式返回内容增量，同时累积工具调用；最终事件携带完整结果。
+
+        内容增量即时 yield，工具调用在流结束后组装为 ToolCallResult。
+        """
+        try:
+            response = await self._client.chat.completions.create(
+                model=self._model,
+                messages=self._request_messages(messages),
+                tools=cast(Any, list(tools)),
+                tool_choice="auto",
+                stream=True,
+            )
+        except (
+            APIConnectionError,
+            RateLimitError,
+            InternalServerError,
+            APIStatusError,
+            OpenAIError,
+        ):
+            raise ModelUnavailableError("Agent model is unavailable") from None
+
+        content_parts: list[str] = []
+        # OpenAI 流式工具调用按 index 分片到达，需按索引累积 id/name/arguments。
+        tool_acc: dict[int, dict[str, str]] = {}
+
+        try:
+            async for chunk in response:
+                if not chunk.choices:
+                    continue
+                delta = chunk.choices[0].delta
+                if delta.content:
+                    content_parts.append(delta.content)
+                    yield ToolStreamEvent(delta=delta.content)
+                if delta.tool_calls:
+                    for tc in delta.tool_calls:
+                        idx = tc.index
+                        slot = tool_acc.setdefault(idx, {"id": "", "name": "", "arguments": ""})
+                        if tc.id:
+                            slot["id"] = tc.id
+                        if tc.type:
+                            pass  # 固定为 "function"
+                        if tc.function:
+                            if tc.function.name:
+                                slot["name"] = tc.function.name
+                            if tc.function.arguments:
+                                slot["arguments"] += tc.function.arguments
+        except (
+            APIConnectionError,
+            RateLimitError,
+            InternalServerError,
+            APIStatusError,
+            OpenAIError,
+        ):
+            raise ModelUnavailableError("Agent model is unavailable") from None
+
+        tool_calls: list[ToolCall] = []
+        for idx in sorted(tool_acc):
+            slot = tool_acc[idx]
+            arguments = slot["arguments"] or "{}"
+            try:
+                parsed = json.loads(arguments)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(parsed, dict):
+                continue
+            tool_calls.append(
+                ToolCall(id=slot["id"], name=slot["name"], arguments=parsed)
+            )
+
+        yield ToolStreamEvent(
+            result=ToolCallResult(
+                content="".join(content_parts) or None,
+                tool_calls=tuple(tool_calls),
+            )
+        )
 
     @staticmethod
     def _request_messages(

@@ -1,5 +1,6 @@
 """Agent 会话持久化和模型调用服务。"""
 
+import asyncio
 import inspect
 from collections.abc import AsyncIterator
 from time import monotonic
@@ -22,7 +23,6 @@ from yitu.agent.models import AgentConversation, AgentMemory, AgentMessage
 from yitu.agent.nodes import security_refusal
 from yitu.agent.privacy import redact_text
 from yitu.agent.prompts import (
-    BUDGET_REFUSAL,
     KNOWLEDGE_ANSWER_PROMPT,
     KNOWLEDGE_NOT_FOUND_REPLY,
 )
@@ -229,6 +229,7 @@ class AgentConversationService:
             ModelMessage(role=item.role, content=item.content) for item in history
         ]
         reply_parts: list[str] = []
+        streamed = False
         try:
             if route == "knowledge":
                 tool_result = await KnowledgeSearchTool().execute(
@@ -242,14 +243,15 @@ class AgentConversationService:
                     and tool_result.data is not None
                     and tool_result.data.citations
                 ):
-                    reply_parts.append(
-                        await self._knowledge_reply(
-                            model,
-                            history_messages,
-                            memories,
-                            tool_result.data.citations,
-                        )
-                    )
+                    async for chunk in self._stream_knowledge_reply(
+                        model,
+                        history_messages,
+                        memories,
+                        tool_result.data.citations,
+                    ):
+                        reply_parts.append(chunk)
+                        yield ("delta", {"content": chunk})
+                    streamed = True
                 else:
                     # 无证据时不调用模型，杜绝凭空作答。
                     reply_parts.append(KNOWLEDGE_NOT_FOUND_REPLY)
@@ -262,42 +264,50 @@ class AgentConversationService:
                     ),
                     ToolContext(actor=actor, session=self._session),
                 )
-                reply_parts.append(
-                    await self._tool_reply(
-                        model, history_messages, memories, tool_result
-                    )
-                )
+                async for chunk in self._stream_tool_reply(
+                    model, history_messages, memories, tool_result
+                ):
+                    reply_parts.append(chunk)
+                    yield ("delta", {"content": chunk})
+                streamed = True
                 trace.record("tool.shipment", found=tool_result.found)
             elif route == "address_tool":
                 tool_result = await AddressBookTool().execute(
                     ToolContext(actor=actor, session=self._session)
                 )
-                reply_parts.append(
-                    await self._tool_reply(
-                        model, history_messages, memories, tool_result
-                    )
-                )
+                async for chunk in self._stream_tool_reply(
+                    model, history_messages, memories, tool_result
+                ):
+                    reply_parts.append(chunk)
+                    yield ("delta", {"content": chunk})
+                streamed = True
                 trace.record("tool.addresses", found=tool_result.found)
             elif route == "identity_tool":
                 tool_result = await IdentityTool().execute(
                     ToolContext(actor=actor, session=self._session)
                 )
-                reply_parts.append(
-                    await self._tool_reply(
-                        model, history_messages, memories, tool_result
-                    )
-                )
+                async for chunk in self._stream_tool_reply(
+                    model, history_messages, memories, tool_result
+                ):
+                    reply_parts.append(chunk)
+                    yield ("delta", {"content": chunk})
+                streamed = True
                 trace.record("tool.identity", found=tool_result.found)
             elif route == "draft":
-                draft_reply, pending_address = await self._run_draft_loop(
+                draft_holder: dict[str, object] = {}
+                async for chunk in self._stream_draft_loop(
                     conversation.id,
                     actor,
                     content,
                     history_messages,
                     addresses,
                     model,
-                )
-                reply_parts.append(draft_reply)
+                    draft_holder,
+                ):
+                    reply_parts.append(chunk)
+                    yield ("delta", {"content": chunk})
+                pending_address = draft_holder.get("pending_address")
+                streamed = True
                 trace.record("draft.loop_completed")
             elif route == "respond" and understanding.clarification_question:
                 reply_parts.append(understanding.clarification_question)
@@ -308,6 +318,7 @@ class AgentConversationService:
                     if chunk:
                         reply_parts.append(chunk)
                         yield ("delta", {"content": chunk})
+                streamed = True
                 trace.record("model.stream_completed")
             else:
                 # 未接入的工具分支只返回图生成的安全动作，不让模型伪造业务结果。
@@ -324,7 +335,7 @@ class AgentConversationService:
                 status_code=503,
             )
 
-        if route != "respond":
+        if not streamed:
             yield ("delta", {"content": "".join(reply_parts)})
         reply = "".join(reply_parts)
         if not reply:
@@ -367,26 +378,27 @@ class AgentConversationService:
             MessageView.model_validate(assistant_message).model_dump(mode="json"),
         )
 
-    async def _tool_reply(
+    async def _stream_tool_reply(
         self,
         model: ModelAdapter,
         history: list[ModelMessage],
         memories: list[str],
         tool_result: ToolResult[BaseModel],
-    ) -> str:
-        """把工具结果回喂模型，生成自然语言回复。"""
-        return await model.complete(
-            build_model_context(history, memories, [tool_result.model_dump_json()])
-        )
+    ) -> AsyncIterator[str]:
+        """把工具结果回喂模型，流式生成自然语言回复。"""
+        context = build_model_context(history, memories, [tool_result.model_dump_json()])
+        async for chunk in model.stream(context):
+            if chunk:
+                yield chunk
 
-    async def _knowledge_reply(
+    async def _stream_knowledge_reply(
         self,
         model: ModelAdapter,
         history: list[ModelMessage],
         memories: list[str],
         citations: list[KnowledgeCitation],
-    ) -> str:
-        """把检索证据结构化为证据块，配合专用指令生成规则解答。"""
+    ) -> AsyncIterator[str]:
+        """把检索证据结构化为证据块，配合专用指令流式生成规则解答。"""
         evidence = _format_knowledge_evidence(citations)
         messages = build_model_context(history, memories)
         messages.append(
@@ -397,7 +409,9 @@ class AgentConversationService:
                 ),
             )
         )
-        return await model.complete(messages)
+        async for chunk in model.stream(messages):
+            if chunk:
+                yield chunk
 
     async def stream_message(
         self,
@@ -466,7 +480,7 @@ class AgentConversationService:
         )
         return result, addresses
 
-    async def _run_draft_loop(
+    async def _stream_draft_loop(
         self,
         conversation_id: UUID,
         actor: CurrentUser,
@@ -474,16 +488,15 @@ class AgentConversationService:
         history: list[ModelMessage],
         addresses: list[Address],
         model: ModelAdapter,
-    ) -> tuple[str, dict[str, object] | None]:
-        """把草稿填写交给 agentic loop：模型通过 update_draft 增量填字段。
+        result_holder: dict[str, object],
+    ) -> AsyncIterator[str]:
+        """流式草稿填写 loop：内容增量即时 yield，pending_address 存入 result_holder。
 
-        返回 (回复文本, 地址簿外新地址的收集信号)；无新地址时信号为 None。
+        通过 asyncio.Queue 在 LangGraph 节点执行期间并发传递 token 增量，
+        让用户在 agentic loop 的最终模型调用阶段看到逐字输出。
         """
         draft = await DraftService(self._session).get_or_create(conversation_id, actor)
         thread_id = str(conversation_id)
-        # 草稿 loop 内部的 assistant/tool 往返只服务于单轮；跨请求上下文由 DB 的
-        # history 与草稿 payload 承担。每轮先清空该 thread 的 checkpoint，避免上一轮
-        # 的 draft_turns 经 add reducer 累积进本轮、覆盖掉新的 user_message。
         checkpointer = self._checkpointer
         if checkpointer is None:
             checkpointer = await get_shared_checkpointer()
@@ -505,20 +518,35 @@ class AgentConversationService:
             "execution_started_at": monotonic(),
             "timeout_seconds": 30.0,
         }
-        result = await build_draft_loop_graph(
+        queue: asyncio.Queue[str | None] = asyncio.Queue()
+        graph = build_draft_loop_graph(
             model,
             actor=actor,
             session=self._session,
             addresses=addresses,
             checkpointer=checkpointer,
-        ).ainvoke(
-            loop_state,
-            config={"configurable": {"thread_id": thread_id}},
+            stream_queue=queue,
         )
-        return (
-            result.get("draft_response") or BUDGET_REFUSAL,
-            result.get("pending_address"),
-        )
+
+        async def _run_graph() -> dict[str, Any]:
+            try:
+                return await graph.ainvoke(
+                    loop_state,
+                    config={"configurable": {"thread_id": thread_id}},
+                )
+            finally:
+                await queue.put(None)
+
+        graph_task = asyncio.create_task(_run_graph())
+
+        while True:
+            item = await queue.get()
+            if item is None:
+                break
+            yield item
+
+        graph_result = await graph_task
+        result_holder["pending_address"] = graph_result.get("pending_address")
 
     async def save_draft_address(
         self,
