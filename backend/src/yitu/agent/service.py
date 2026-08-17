@@ -4,7 +4,7 @@ import asyncio
 import inspect
 from collections.abc import AsyncIterator
 from time import monotonic
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -48,6 +48,7 @@ from yitu.agent.understanding import (
     UnderstandingResult,
     UnderstandingService,
     is_confirmation_word,
+    is_save_address_word,
     preprocess_text,
 )
 from yitu.agent.write_tools import AgentWriteService
@@ -214,6 +215,9 @@ class AgentConversationService:
                 understanding = await self._maybe_confirm(
                     conversation.id, actor, content, understanding
                 )
+                understanding = await self._maybe_save_address(
+                    conversation.id, actor, content, understanding
+                )
             except ModelUnavailableError as error:
                 conversation.status = "WAITING_RETRY"
                 conversation.updated_at = Clock.now()
@@ -319,7 +323,9 @@ class AgentConversationService:
                 ):
                     reply_parts.append(chunk)
                     yield ("delta", {"content": chunk})
-                pending_address = draft_holder.get("pending_address")
+                pending_address = cast(
+                    dict[str, object] | None, draft_holder.get("pending_address")
+                )
                 streamed = True
                 trace.record("draft.loop_completed")
                 quote_reply = await self._auto_quote_if_complete(
@@ -607,9 +613,77 @@ class AgentConversationService:
         quote = await self._session.get(QuoteSnapshot, grant.quote_id)
         if quote is None:
             raise AppError("AGENT_QUOTE_MISSING", "报价快照不存在", 409)
-        return (
+        pending_save = await self._ephemeral_address_ids(draft)
+        # 下单后草稿已消费，重置状态防止重复下单，也避免前端继续展示确认按钮。
+        draft.status = "SHIPMENT_CREATED"
+        if pending_save:
+            draft.payload = {**draft.payload, "pending_save_address_ids": pending_save}
+        reply = (
             f"运单已创建，运单号 {shipment.shipment_no}，"
             f"待支付 {quote.total_cents / 100:.2f} 元。请前往运单详情完成支付。"
+        )
+        if pending_save:
+            reply += "本次寄件使用了新地址，需要保存到地址簿吗？回复「保存」即可。"
+        return reply
+
+    async def _ephemeral_address_ids(self, draft: AgentShipmentDraft) -> list[str]:
+        """收集草稿里不在地址簿的临时地址 id，供寄件后询问是否保存。"""
+        ids: list[str] = []
+        for key in ("sender_address_id", "receiver_address_id"):
+            value = draft.payload.get(key)
+            if value is None:
+                continue
+            try:
+                address = await self._session.get(Address, UUID(str(value)))
+            except (ValueError, TypeError):
+                continue
+            if (
+                address is not None
+                and address.owner_id == draft.owner_id
+                and address.ephemeral
+            ):
+                ids.append(str(address.id))
+        return ids
+
+    async def _maybe_save_address(
+        self,
+        conversation_id: UUID,
+        actor: CurrentUser,
+        content: str,
+        understanding: UnderstandingResult,
+    ) -> UnderstandingResult:
+        """下单后待保存临时地址且整句为保存确认时，确定性转为正式地址。"""
+        if not is_save_address_word(content):
+            return understanding
+        draft = await self._session.scalar(
+            select(AgentShipmentDraft).where(
+                AgentShipmentDraft.conversation_id == conversation_id,
+                AgentShipmentDraft.owner_id == actor.id,
+            )
+        )
+        if draft is None:
+            return understanding
+        pending = cast(
+            list[str], draft.payload.get("pending_save_address_ids") or []
+        )
+        if not pending:
+            return understanding
+        for value in pending:
+            try:
+                address = await self._session.get(Address, UUID(str(value)))
+            except (ValueError, TypeError):
+                continue
+            if address is not None and address.owner_id == actor.id:
+                address.ephemeral = False
+        draft.payload = {**draft.payload, "pending_save_address_ids": []}
+        return understanding.model_copy(
+            update={
+                "intents": ["GENERAL_CHAT"],
+                "primary_intent": "GENERAL_CHAT",
+                "confidence": 1.0,
+                "recognition_path": "RULE",
+                "clarification_question": "已保存到地址簿，下次寄件可直接选择。",
+            }
         )
 
     async def _maybe_confirm(

@@ -46,7 +46,7 @@ async def _seed_region_path(
     """幂等创建省/市/区三级区划（唯一约束按 level+code 复用已有行）。"""
     specs = (
         ("110000", "北京市", RegionLevel.PROVINCE),
-        ("110100", "北京市", RegionLevel.CITY),
+        ("110000", "北京市", RegionLevel.CITY),
         ("110105", "朝阳区", RegionLevel.DISTRICT),
     )
     regions: dict[RegionLevel, AdministrativeRegion] = {}

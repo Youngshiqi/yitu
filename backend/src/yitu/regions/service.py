@@ -28,6 +28,82 @@ async def list_regions(
     return list(result)
 
 
+# 常见行政后缀按「长后缀优先」排序，规范化时只去掉一个，避免「自治区」误伤「区」。
+_REGION_SUFFIXES = (
+    "特别行政区",
+    "维吾尔自治区",
+    "壮族自治区",
+    "回族自治区",
+    "自治区",
+    "自治州",
+    "自治县",
+    "自治旗",
+    "地区",
+    "省",
+    "市",
+    "区",
+    "县",
+    "旗",
+    "盟",
+)
+
+
+def _normalize_region_name(name: str) -> str:
+    """去除行政区划名称的常见后缀，供口语地址（如「北京」「朝阳」）模糊匹配。"""
+    normalized = name.strip()
+    for suffix in _REGION_SUFFIXES:
+        if normalized.endswith(suffix) and len(normalized) > len(suffix):
+            normalized = normalized[: -len(suffix)]
+            break
+    return normalized
+
+
+async def _find_region_by_name(
+    session: AsyncSession,
+    level: RegionLevel,
+    name: str,
+    parent_id: UUID | None,
+) -> AdministrativeRegion | None:
+    """在指定层级（可选限定父节点）内按规范化名称唯一匹配区域。"""
+    target = _normalize_region_name(name)
+    statement = select(AdministrativeRegion).where(
+        AdministrativeRegion.level == level,
+        AdministrativeRegion.enabled.is_(True),
+    )
+    if parent_id is not None:
+        statement = statement.where(AdministrativeRegion.parent_id == parent_id)
+    regions = list((await session.scalars(statement)).all())
+    matches = [
+        region for region in regions if _normalize_region_name(region.name) == target
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+async def resolve_region_by_names(
+    session: AsyncSession,
+    province_name: str,
+    city_name: str,
+    district_name: str,
+) -> tuple[AdministrativeRegion, AdministrativeRegion, AdministrativeRegion]:
+    """按省/市/区县名称逐层解析并校验父子关系，供对话口述地址落库。"""
+    province = await _find_region_by_name(
+        session, RegionLevel.PROVINCE, province_name, None
+    )
+    if province is None:
+        raise AppError("REGION_NOT_FOUND", f"未找到省份「{province_name}」", 422)
+    city = await _find_region_by_name(
+        session, RegionLevel.CITY, city_name, province.id
+    )
+    if city is None:
+        raise AppError("REGION_NOT_FOUND", f"未找到城市「{city_name}」", 422)
+    district = await _find_region_by_name(
+        session, RegionLevel.DISTRICT, district_name, city.id
+    )
+    if district is None:
+        raise AppError("REGION_NOT_FOUND", f"未找到区县「{district_name}」", 422)
+    return province, city, district
+
+
 async def resolve_region_path(
     session: AsyncSession,
     province_id: UUID,

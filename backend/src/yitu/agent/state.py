@@ -59,5 +59,5 @@ class AgentState(TypedDict, total=False):
     address_labels: list[str]
     draft_turns: Annotated[list[dict[str, object]], add]
     draft_response: str
-    # 地址簿外新地址的收集信号：{"role": "sender" | "receiver"}，透出给前端弹表单。
+    # 地址簿外新地址的历史收集信号字段，保留向后兼容；当前已改为 save_address 工具直接落库。
     pending_address: dict[str, object] | None

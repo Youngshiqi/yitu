@@ -9,13 +9,18 @@ from langgraph.graph.state import CompiledStateGraph
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yitu.addresses.models import Address
-from yitu.agent.model_adapter import ModelAdapter, ModelMessage, ToolCall, ToolStreamEvent
+from yitu.agent.model_adapter import (
+    ModelAdapter,
+    ModelMessage,
+    ToolCall,
+    ToolCallResult,
+)
 from yitu.agent.nodes import _budget_refusal
 from yitu.agent.prompts import DRAFT_LOOP_PROMPT
 from yitu.agent.state import AgentState
 from yitu.agent.tools.drafts import (
     UPDATE_DRAFT_TOOL_SPECS,
-    execute_request_address,
+    execute_save_address,
     execute_update_draft,
 )
 from yitu.identity.service import CurrentUser
@@ -28,7 +33,7 @@ def build_draft_loop_graph(
     session: AsyncSession,
     addresses: list[Address],
     checkpointer: Any = None,
-    stream_queue: asyncio.Queue[str] | None = None,
+    stream_queue: asyncio.Queue[str | None] | None = None,
 ) -> CompiledStateGraph[AgentState, None, AgentState, AgentState]:
     """构建草稿填写子图：draft_agent ⇄ draft_tools 循环，无工具调用时结束。
 
@@ -50,7 +55,7 @@ def build_draft_loop_graph(
 
 def draft_agent_node(
     model: ModelAdapter,
-    stream_queue: asyncio.Queue[str] | None = None,
+    stream_queue: asyncio.Queue[str | None] | None = None,
 ) -> Any:
     """让模型决定：调用 update_draft 填字段，或返回纯文本（追问/完成）。
 
@@ -67,15 +72,14 @@ def draft_agent_node(
         messages = _turns_to_messages(turns) if turns else _initial_messages(state)
 
         if stream_queue is not None:
-            content_parts: list[str] = []
-            final_result = None
+            result: ToolCallResult | None = None
             async for event in model.stream_with_tools(messages, UPDATE_DRAFT_TOOL_SPECS):
                 if event.delta:
-                    content_parts.append(event.delta)
                     await stream_queue.put(event.delta)
                 if event.result is not None:
-                    final_result = event.result
-            result = final_result  # type: ignore[assignment]
+                    result = event.result
+            if result is None:
+                result = ToolCallResult(content=None, tool_calls=())
         else:
             result = await model.complete_with_tools(messages, UPDATE_DRAFT_TOOL_SPECS)
 
@@ -116,7 +120,6 @@ def draft_tools_node(
         calls = _as_call_list(turns[-1].get("tool_calls"))
         conversation_id = UUID(str(state["conversation_id"]))
         results: list[dict[str, object]] = []
-        pending_address: dict[str, object] | None = None
         for call in calls:
             name = call.get("name")
             arguments = call.get("arguments")
@@ -126,9 +129,10 @@ def draft_tools_node(
                 content = await execute_update_draft(
                     session, actor, addresses, conversation_id, arguments
                 )
-            elif name == "request_address":
-                pending_address = execute_request_address(arguments)
-                content = "已请求用户在前端补充地址。"
+            elif name == "save_address":
+                content = await execute_save_address(
+                    session, actor, conversation_id, arguments
+                )
             else:
                 content = f"未知工具：{name}"
             results.append(
@@ -138,10 +142,7 @@ def draft_tools_node(
                     "tool_call_id": call.get("id"),
                 }
             )
-        update: AgentState = {"draft_turns": results}
-        if pending_address is not None:
-            update["pending_address"] = pending_address
-        return update
+        return {"draft_turns": results}
 
     return _tools
 

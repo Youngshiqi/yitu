@@ -112,6 +112,21 @@ def is_confirmation_word(message: str) -> bool:
     return stripped in _CONFIRMATION_WORDS
 
 
+# 保存地址的否定表达：命中即不视为保存确认，避免「先不保存」误触发。
+_NEGATIVE_SAVE_WORDS = ("不保存", "不用保存", "先不保存", "算了", "不需要", "不用了")
+
+
+def is_save_address_word(message: str) -> bool:
+    """确定性判定整句是否为保存地址确认，供寄件后询问是否保存地址。"""
+    normalized = preprocess_text(message).normalized
+    stripped = normalized.strip("。！？!?，,；;.~～、")
+    if not stripped:
+        return False
+    if any(negative in stripped for negative in _NEGATIVE_SAVE_WORDS):
+        return False
+    return "保存" in stripped or is_confirmation_word(message)
+
+
 @dataclass(frozen=True, slots=True)
 class FastPathRule:
     """只描述高精度规则；出现多个候选时必须放弃快速路径。"""

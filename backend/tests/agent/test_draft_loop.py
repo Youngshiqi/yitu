@@ -24,7 +24,6 @@ from yitu.agent.service import _clear_thread
 from yitu.agent.state import AgentState
 from yitu.agent.tools.drafts import (
     _match_address_label,
-    execute_request_address,
     execute_update_draft,
 )
 from yitu.identity.models import Role
@@ -281,7 +280,23 @@ async def test_draft_loop_clears_thread_between_turns() -> None:
 
 
 @pytest.mark.asyncio
-async def test_draft_loop_request_address_sets_pending_signal() -> None:
+async def test_draft_loop_dispatches_save_address(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_save(
+        session: object,
+        actor: CurrentUser,
+        conversation_id: UUID,
+        arguments: dict[str, object],
+    ) -> str:
+        del session, actor, conversation_id
+        captured.update(arguments)
+        return "已保存寄件地址。"
+
+    monkeypatch.setattr("yitu.agent.draft_loop.execute_save_address", fake_save)
+
     model = LoopModel(
         [
             ToolCallResult(
@@ -289,29 +304,22 @@ async def test_draft_loop_request_address_sets_pending_signal() -> None:
                 tool_calls=(
                     ToolCall(
                         id="call_1",
-                        name="request_address",
-                        arguments={"role": "receiver"},
+                        name="save_address",
+                        arguments={"role": "sender", "detail": "望京SOHO"},
                     ),
                 ),
             ),
-            ToolCallResult(content="请在弹窗里补充收件地址。", tool_calls=()),
+            ToolCallResult(content="寄件地址已记录。", tool_calls=()),
         ]
     )
     graph = _build_graph(model)
 
     result = await graph.ainvoke(_loop_state())
 
-    assert result["draft_response"] == "请在弹窗里补充收件地址。"
-    assert result["pending_address"] == {"role": "receiver"}
+    assert result["draft_response"] == "寄件地址已记录。"
+    assert captured == {"role": "sender", "detail": "望京SOHO"}
     turns = result["draft_turns"]
     assert len(turns) == 3
     assert turns[0]["role"] == "assistant" and turns[0].get("tool_calls")
     assert turns[1]["role"] == "tool"
     assert turns[2]["role"] == "assistant" and not turns[2].get("tool_calls")
-
-
-def test_execute_request_address_requires_valid_role() -> None:
-    assert execute_request_address({"role": "sender"}) == {"role": "sender"}
-    assert execute_request_address({"role": "receiver"}) == {"role": "receiver"}
-    with pytest.raises(ValueError):
-        execute_request_address({"role": "courier"})
