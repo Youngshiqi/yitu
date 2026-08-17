@@ -2,6 +2,7 @@ from asyncio import to_thread
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import lru_cache
+from typing import Protocol
 from uuid import UUID
 
 from sqlalchemy import func, select, text, union
@@ -14,8 +15,22 @@ from yitu.knowledge.tokenization import expand_query_tokens, tokenize_for_query
 KEYWORD_WEIGHT = 0.55
 VECTOR_WEIGHT = 0.45
 MAX_CANDIDATES = 160
+# 配置精排器后，先取较大的融合候选池交给精排，再截断到 limit。
+RERANK_POOL_SIZE = 30
 # 查询向量进程级 LRU：相同 query 不再重复请求嵌入服务（约 2MB 上限）。
 _EMBED_CACHE_SIZE = 512
+
+
+class QueryRewriter(Protocol):
+    """把口语化查询改写为检索友好的查询；失败时应回退原查询。"""
+
+    async def rewrite(self, query: str) -> str: ...
+
+
+class Reranker(Protocol):
+    """对融合候选按查询相关性精排；失败时应返回原始顺序。"""
+
+    async def rerank(self, query: str, candidates: list["Evidence"]) -> list["Evidence"]: ...
 
 
 @lru_cache(maxsize=_EMBED_CACHE_SIZE)
@@ -49,9 +64,14 @@ class KnowledgeRetriever:
         self,
         session: AsyncSession,
         provider: EmbeddingProvider | None = None,
+        *,
+        rewriter: QueryRewriter | None = None,
+        reranker: Reranker | None = None,
     ) -> None:
         self.session = session
         self.provider = provider
+        self.rewriter = rewriter
+        self.reranker = reranker
 
     async def search(
         self,
@@ -60,8 +80,11 @@ class KnowledgeRetriever:
         category: str | None = None,
         limit: int = 5,
     ) -> list[Evidence]:
-        """分别召回关键词和向量候选，再按固定权重归一化融合。"""
+        """分别召回关键词和向量候选，再按固定权重归一化融合，可选精排。"""
         normalized = query.strip()
+        if self.rewriter is not None:
+            # 改写失败时回退原查询，绝不阻塞检索主链路。
+            normalized = (await self.rewriter.rewrite(normalized)).strip() or query.strip()
         query_tokens = tokenize_for_query(normalized)
         if not normalized or not query_tokens:
             return []
@@ -145,10 +168,10 @@ class KnowledgeRetriever:
                 KnowledgeChunk.index_version.desc(),
                 KnowledgeChunk.chunk_index,
             )
-            .limit(max(1, min(limit, 20)))
+            .limit(max(1, min(limit, 20)) if self.reranker is None else max(limit, RERANK_POOL_SIZE))
         )
         rows = (await self.session.execute(statement)).all()
-        return [
+        evidence = [
             Evidence(
                 document_id=document.id,
                 filename=document.filename,
@@ -164,3 +187,12 @@ class KnowledgeRetriever:
             )
             for chunk, document, score in rows
         ]
+        if self.reranker is None or not evidence:
+            return evidence[: max(1, min(limit, 20))]
+        try:
+            ranked = await self.reranker.rerank(normalized, evidence)
+        except Exception:  # noqa: BLE001 - 精排失败回退融合排序
+            return evidence[: max(1, min(limit, 20))]
+        if not ranked:
+            return evidence[: max(1, min(limit, 20))]
+        return ranked[: max(1, min(limit, 20))]

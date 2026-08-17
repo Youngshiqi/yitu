@@ -4,6 +4,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from yitu.agent.rag_enhancements import build_rag_enhancements
 from yitu.agent.tools.base import ToolContext, ToolResult
 from yitu.knowledge.retrieval import KnowledgeRetriever
 
@@ -50,7 +51,13 @@ class KnowledgeSearchTool:
         request: KnowledgeSearchInput,
         context: ToolContext,
     ) -> ToolResult[KnowledgeSearchResult]:
-        evidence = await KnowledgeRetriever(context.session).search(
+        # 生产模型可用时启用查询改写与精排；固定模型环境自动退回纯融合排序。
+        rewriter, reranker = build_rag_enhancements()
+        evidence = await KnowledgeRetriever(
+            context.session,
+            rewriter=rewriter,
+            reranker=reranker,
+        ).search(
             request.query,
             category=request.category,
             limit=request.limit,
