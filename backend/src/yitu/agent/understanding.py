@@ -23,6 +23,8 @@ IntentName = Literal[
 
 CONFIDENCE_THRESHOLD = 0.6
 jieba.setLogLevel(ERROR)
+# 词典预热放在模块加载期，消除首次请求 0.5-1s 的冷启动延迟。
+jieba.initialize()
 
 
 class DraftCandidate(BaseModel):
@@ -108,7 +110,8 @@ _FAST_PATH_RULES = (
         (
             re.compile(r"(?:查|看|问).{0,8}(?:运单|快递|包裹).{0,8}(?:状态|进度|轨迹|到哪)"),
             re.compile(r"(?:运单|快递|包裹).{0,8}(?:到哪|进度|轨迹|预计.{0,2}到)"),
-            re.compile(r"\byt[a-z0-9]{4,32}\b.{0,8}(?:查|状态|轨迹|到哪)"),
+            # \b 对 CJK 无效（汉字属于 \w），改用 ASCII 环视断言单号边界。
+            re.compile(r"(?<![a-z0-9])yt[a-z0-9]{4,32}(?![a-z0-9]).{0,8}(?:查|状态|轨迹|到哪)"),
         ),
     ),
     FastPathRule(
@@ -149,6 +152,11 @@ _FAST_PATH_RULES = (
 )
 
 
+# 查询型信号：只命中 DRAFT_UPDATE 路由正则但语句实际在询问已有运单/费用/时效时，
+# 放弃快速路径交给 LLM，避免「查一下从北京寄到上海的运单」被误判为填写草稿。
+_QUERY_SIGNAL = re.compile(r"(查|看|问|轨迹|状态|进度|到哪|多久|预计|多少钱|费用|运费|价格)")
+
+
 def fast_path(
     preprocessed: PreprocessedText,
     address_labels: list[str],
@@ -159,10 +167,14 @@ def fast_path(
         for rule in _FAST_PATH_RULES
         if any(pattern.search(preprocessed.normalized) for pattern in rule.patterns)
     }
+    if matched == {"DRAFT_UPDATE"} and _QUERY_SIGNAL.search(preprocessed.normalized):
+        return None
     if len(matched) != 1:
         return None
     intent = matched.pop()
-    shipment_match = re.search(r"\byt[a-z0-9]{4,32}\b", preprocessed.normalized)
+    shipment_match = re.search(
+        r"(?<![a-z0-9])yt[a-z0-9]{4,32}(?![a-z0-9])", preprocessed.normalized
+    )
     draft = _extract_fast_draft(preprocessed.normalized, address_labels)
     return UnderstandingResult(
         intents=[intent],

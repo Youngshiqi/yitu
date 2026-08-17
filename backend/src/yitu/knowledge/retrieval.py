@@ -1,6 +1,7 @@
 from asyncio import to_thread
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import lru_cache
 from uuid import UUID
 
 from sqlalchemy import func, select, text, union
@@ -13,6 +14,17 @@ from yitu.knowledge.tokenization import expand_query_tokens, tokenize_for_query
 KEYWORD_WEIGHT = 0.55
 VECTOR_WEIGHT = 0.45
 MAX_CANDIDATES = 160
+# 查询向量进程级 LRU：相同 query 不再重复请求嵌入服务（约 2MB 上限）。
+_EMBED_CACHE_SIZE = 512
+
+
+@lru_cache(maxsize=_EMBED_CACHE_SIZE)
+def _embed_query_cached(provider: EmbeddingProvider, query: str) -> tuple[float, ...]:
+    """以 provider 实例 + query 为键缓存查询向量；异常不入缓存。"""
+    vectors = provider.embed([query])
+    if len(vectors) != 1:
+        raise RuntimeError("Embedding provider returned an invalid query vector")
+    return tuple(vectors[0])
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,10 +67,7 @@ class KnowledgeRetriever:
             return []
 
         provider = self.provider or get_embedding_provider()
-        query_vectors = await to_thread(provider.embed, [normalized])
-        if len(query_vectors) != 1:
-            raise RuntimeError("Embedding provider returned an invalid query vector")
-        query_vector = query_vectors[0]
+        query_vector = list(await to_thread(_embed_query_cached, provider, normalized))
         candidate_limit = min(max(limit * 8, 40), MAX_CANDIDATES)
         now = datetime.now(UTC)
 
