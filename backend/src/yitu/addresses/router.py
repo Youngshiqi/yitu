@@ -9,6 +9,7 @@ from yitu.addresses.service import (
     address_response,
     assign_region_path,
     delete_address,
+    find_matching_address,
     get_owned_address,
     list_addresses,
 )
@@ -34,8 +35,26 @@ _customer = Depends(customer_user)
 async def list_book(user: CurrentUser = _customer, session: AsyncSession = _session) -> list[dict[str, object]]:
     return [address_response(item) for item in await list_addresses(session, user)]
 
-@router.post("", response_model=AddressResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=AddressResponse)
 async def create_address(payload: AddressCreate, user: CurrentUser = _customer, session: AsyncSession = _session) -> dict[str, object]:
+    """创建地址；命中既有相同地址时复用并返回 200，避免地址簿重复。"""
+    existing = await find_matching_address(
+        session,
+        user.id,
+        payload.recipient_name,
+        payload.phone,
+        payload.district_region_id,
+        payload.detail,
+    )
+    if existing is not None:
+        if existing.ephemeral:
+            # 一次性临时地址升级为正式条目并补标签
+            existing.ephemeral = False
+            existing.label = existing.label or payload.label
+        elif existing.label is None and payload.label is not None:
+            existing.label = payload.label
+        await session.commit()
+        return address_response(await get_owned_address(session, existing.id, user))
     values = payload.model_dump(exclude={"province_region_id", "city_region_id", "district_region_id"})
     address = Address(owner_id=user.id, district_code="", **values)
     await assign_region_path(

@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from typing import Literal
-from uuid import UUID
+from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -80,17 +80,19 @@ def _payload(
     *,
     role: Literal["sender", "receiver"],
     save: bool,
+    detail: str = "建国路88号",
 ) -> DraftAddressCreate:
+    # 电话随机生成：共享测试库存在历史残留地址，查重逻辑会命中同五元组行
     return DraftAddressCreate(
         role=role,
         save=save,
         label="家",
         recipient_name="张三",
-        phone="13800138000",
+        phone=f"138{uuid4().int % 10**8:08d}",
         province_region_id=province.id,
         city_region_id=city.id,
         district_region_id=district.id,
-        detail="建国路88号",
+        detail=detail,
     )
 
 
@@ -170,3 +172,88 @@ async def test_list_addresses_filters_ephemeral() -> None:
         ids = {address.id for address in listed}
         assert formal.id in ids
         assert temporary.id not in ids
+
+
+async def test_save_draft_address_reuses_existing_formal() -> None:
+    """同一地址二次提交（含空白差异与换角色）应复用既有条目，不新增行。"""
+    async with SessionFactory() as session, session.begin():
+        actor, conversation_id = await _seed_actor_and_conversation(session)
+        province, city, district = await _seed_region_path(session)
+
+        base = _payload(province, city, district, role="receiver", save=True)
+        first = await AgentConversationService(session).save_draft_address(
+            conversation_id, actor, base
+        )
+        padded = base.model_copy(
+            update={
+                "role": "sender",
+                "label": "公司",
+                "recipient_name": "  张三  ",
+                "detail": "  建国路88号  ",
+            }
+        )
+        second = await AgentConversationService(session).save_draft_address(
+            conversation_id, actor, padded
+        )
+
+        assert second.payload["sender_address_id"] == first.payload["receiver_address_id"]
+        rows = list(
+            await session.scalars(
+                select(Address).where(
+                    Address.owner_id == actor.id,
+                    Address.phone == base.phone,
+                )
+            )
+        )
+        assert len(rows) == 1
+        assert rows[0].ephemeral is False
+
+
+async def test_save_draft_address_upgrades_ephemeral_on_save() -> None:
+    """先临时使用、后勾选保存的同一地址应升级原条目而非另建正式行。"""
+    async with SessionFactory() as session, session.begin():
+        actor, conversation_id = await _seed_actor_and_conversation(session)
+        province, city, district = await _seed_region_path(session)
+
+        base = _payload(province, city, district, role="sender", save=False)
+        first = await AgentConversationService(session).save_draft_address(
+            conversation_id, actor, base
+        )
+        second = await AgentConversationService(session).save_draft_address(
+            conversation_id, actor, base.model_copy(update={"save": True})
+        )
+
+        assert second.payload["sender_address_id"] == first.payload["sender_address_id"]
+        address = await session.get(
+            Address, UUID(str(second.payload["sender_address_id"]))
+        )
+        assert address is not None
+        assert address.ephemeral is False
+        assert address.label == "家"
+
+
+async def test_save_draft_address_distinct_address_still_creates() -> None:
+    """门牌不同即新地址，查重不得误伤。"""
+    async with SessionFactory() as session, session.begin():
+        actor, conversation_id = await _seed_actor_and_conversation(session)
+        province, city, district = await _seed_region_path(session)
+
+        base = _payload(province, city, district, role="receiver", save=True)
+        await AgentConversationService(session).save_draft_address(
+            conversation_id, actor, base
+        )
+        other = base.model_copy(update={"label": "家2", "detail": "建国路89号"})
+        second = await AgentConversationService(session).save_draft_address(
+            conversation_id, actor, other
+        )
+
+        assert second.payload["receiver_address_id"] is not None
+        rows = list(
+            await session.scalars(
+                select(Address).where(
+                    Address.owner_id == actor.id,
+                    Address.phone == base.phone,
+                )
+            )
+        )
+        assert len(rows) == 2

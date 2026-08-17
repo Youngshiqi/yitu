@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -9,6 +9,33 @@ from yitu.identity.models import Role
 from yitu.identity.service import CurrentUser
 from yitu.platform.errors import AppError
 from yitu.regions.service import resolve_region_path
+
+
+async def find_matching_address(
+    session: AsyncSession,
+    owner_id: UUID,
+    recipient_name: str,
+    phone: str,
+    district_region_id: UUID,
+    detail: str,
+) -> Address | None:
+    """按归一化五元组查找既有地址，优先返回正式条目和更早创建的记录。
+
+    姓名与门牌做 strip 归一化后精确比较；命中即视为同一地址，调用方应复用而非新建。
+    """
+    result = await session.scalars(
+        select(Address)
+        .where(
+            Address.owner_id == owner_id,
+            func.trim(Address.recipient_name) == recipient_name.strip(),
+            Address.phone == phone.strip(),
+            Address.district_region_id == district_region_id,
+            func.trim(Address.detail) == detail.strip(),
+        )
+        .order_by(Address.ephemeral.asc(), Address.id.asc())
+        .limit(1)
+    )
+    return result.first()
 
 
 async def get_owned_address(session: AsyncSession, address_id: UUID, user: CurrentUser) -> Address:

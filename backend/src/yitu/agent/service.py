@@ -12,7 +12,7 @@ from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yitu.addresses.models import Address
-from yitu.addresses.service import assign_region_path, list_addresses
+from yitu.addresses.service import assign_region_path, find_matching_address, list_addresses
 from yitu.agent.checkpoint_store import get_shared_checkpointer
 from yitu.agent.context import build_model_context
 from yitu.agent.draft_loop import build_draft_loop_graph
@@ -555,25 +555,45 @@ class AgentConversationService:
         actor: CurrentUser,
         payload: DraftAddressCreate,
     ) -> DraftView:
-        """创建草稿用收寄地址（保存或临时），并回填草稿地址与区县代码。"""
+        """创建草稿用收寄地址（保存或临时），并回填草稿地址与区县代码。
+
+        命中既有相同地址时复用，避免地址簿反复弹表单累积重复条目。
+        """
         await self.get_owned(conversation_id, actor)
-        address = Address(
-            owner_id=actor.id,
-            label=payload.label if payload.save else None,
-            recipient_name=payload.recipient_name,
-            phone=payload.phone,
-            detail=payload.detail,
-            ephemeral=not payload.save,
-        )
-        await assign_region_path(
+        existing = await find_matching_address(
             self._session,
-            address,
-            payload.province_region_id,
-            payload.city_region_id,
+            actor.id,
+            payload.recipient_name,
+            payload.phone,
             payload.district_region_id,
+            payload.detail,
         )
-        self._session.add(address)
-        await self._session.flush()
+        if existing is not None:
+            if payload.save:
+                if existing.ephemeral:
+                    existing.ephemeral = False
+                    existing.label = existing.label or payload.label
+                elif existing.label is None and payload.label is not None:
+                    existing.label = payload.label
+            address = existing
+        else:
+            address = Address(
+                owner_id=actor.id,
+                label=payload.label if payload.save else None,
+                recipient_name=payload.recipient_name,
+                phone=payload.phone,
+                detail=payload.detail,
+                ephemeral=not payload.save,
+            )
+            await assign_region_path(
+                self._session,
+                address,
+                payload.province_region_id,
+                payload.city_region_id,
+                payload.district_region_id,
+            )
+            self._session.add(address)
+            await self._session.flush()
         patch = DraftPatch(
             sender_address_id=address.id if payload.role == "sender" else None,
             receiver_address_id=address.id if payload.role == "receiver" else None,
