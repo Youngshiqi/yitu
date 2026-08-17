@@ -217,7 +217,8 @@ class DraftService:
                 f"agent-draft:{draft.id}:revision:{draft.revision}:quote"
             ),
         )
-        draft.payload["quote_id"] = str(quote.id)
+        # JSONB 原地修改不被 SQLAlchemy 追踪，必须整体替换 payload 才能持久化 quote_id。
+        draft.payload = {**draft.payload, "quote_id": str(quote.id)}
         draft.quote_id = quote.id
         draft.quote_version = quote.rule_version
         draft.status = "READY_FOR_CONFIRMATION"

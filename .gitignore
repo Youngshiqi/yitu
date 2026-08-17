@@ -11,3 +11,7 @@ backend/.coverage
 backend/var/knowledge/documents/
 backend/var/knowledge/inbox/*
 !backend/var/knowledge/inbox/.gitkeep
+.superpowers/
+.workbuddy/
+.reasonix/
+overview.md

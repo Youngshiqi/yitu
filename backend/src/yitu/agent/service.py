@@ -12,15 +12,20 @@ from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yitu.addresses.models import Address
-from yitu.addresses.service import assign_region_path, find_matching_address, list_addresses
+from yitu.addresses.service import (
+    assign_region_path,
+    find_matching_address,
+    list_addresses,
+)
 from yitu.agent.checkpoint_store import get_shared_checkpointer
 from yitu.agent.context import build_model_context
 from yitu.agent.draft_loop import build_draft_loop_graph
 from yitu.agent.drafts import DraftPatch, DraftService, DraftView
+from yitu.agent.grants import GrantService
 from yitu.agent.graph import build_agent_graph
-from yitu.agent.model_adapter import ModelAdapter, ModelMessage, ModelUnavailableError
 from yitu.agent.memory import MemoryService
-from yitu.agent.models import AgentConversation, AgentMessage
+from yitu.agent.model_adapter import ModelAdapter, ModelMessage, ModelUnavailableError
+from yitu.agent.models import AgentConversation, AgentMessage, AgentShipmentDraft
 from yitu.agent.nodes import security_refusal
 from yitu.agent.privacy import redact_text
 from yitu.agent.prompts import (
@@ -42,12 +47,16 @@ from yitu.agent.understanding import (
     DraftCandidate,
     UnderstandingResult,
     UnderstandingService,
+    is_confirmation_word,
     preprocess_text,
 )
+from yitu.agent.write_tools import AgentWriteService
 from yitu.identity.service import CurrentUser
 from yitu.platform.audit import AuditService
 from yitu.platform.clock import Clock
 from yitu.platform.errors import AppError
+from yitu.pricing.models import QuoteSnapshot
+
 
 async def _clear_thread(checkpointer: Any, thread_id: str) -> None:
     """清空指定 thread 的 checkpoint，让每轮草稿 loop 从干净状态开始。
@@ -202,6 +211,9 @@ class AgentConversationService:
                 understanding, addresses = await self._understand(
                     model, history, content, actor
                 )
+                understanding = await self._maybe_confirm(
+                    conversation.id, actor, content, understanding
+                )
             except ModelUnavailableError as error:
                 conversation.status = "WAITING_RETRY"
                 conversation.updated_at = Clock.now()
@@ -310,6 +322,22 @@ class AgentConversationService:
                 pending_address = draft_holder.get("pending_address")
                 streamed = True
                 trace.record("draft.loop_completed")
+                quote_reply = await self._auto_quote_if_complete(
+                    conversation.id, actor
+                )
+                if quote_reply:
+                    reply_parts.append(quote_reply)
+                    yield ("delta", {"content": quote_reply})
+            elif route == "confirmation":
+                try:
+                    reply_parts.append(
+                        await self._confirm_shipment(
+                            conversation.id, actor, str(trace.trace_id)
+                        )
+                    )
+                except AppError as error:
+                    reply_parts.append(error.message)
+                trace.record("shipment.confirmation_handled")
             elif route == "respond" and understanding.clarification_question:
                 reply_parts.append(understanding.clarification_question)
                 trace.record("understanding.clarification")
@@ -548,6 +576,71 @@ class AgentConversationService:
 
         graph_result = await graph_task
         result_holder["pending_address"] = graph_result.get("pending_address")
+
+    async def _auto_quote_if_complete(
+        self, conversation_id: UUID, actor: CurrentUser
+    ) -> str | None:
+        """草稿字段齐全时自动生成报价并提示确认，报价失败降级提示而不整轮失败。"""
+        draft = await DraftService(self._session).get_or_create(conversation_id, actor)
+        if draft.missing_fields:
+            return None
+        try:
+            validation = await DraftService(self._session).validate_and_quote(
+                conversation_id, actor
+            )
+        except AppError:
+            return "报价暂不可用，请稍后重试。"
+        total = validation.quote.total_cents / 100
+        return f"本次运费预计 {total:.2f} 元。回复「确认」即可创建运单。"
+
+    async def _confirm_shipment(
+        self, conversation_id: UUID, actor: CurrentUser, trace_id: str
+    ) -> str:
+        """用户整句确认后，签发并消费一次性授权，在同一事务创建运单。"""
+        draft = await DraftService(self._session).get_or_create(conversation_id, actor)
+        if draft.status != "READY_FOR_CONFIRMATION":
+            return "当前还没有可确认的报价，请先补齐寄件信息。"
+        grant = await GrantService(self._session).issue(conversation_id, actor)
+        shipment = await AgentWriteService(self._session).create_shipment(
+            grant.id, actor, trace_id
+        )
+        quote = await self._session.get(QuoteSnapshot, grant.quote_id)
+        if quote is None:
+            raise AppError("AGENT_QUOTE_MISSING", "报价快照不存在", 409)
+        return (
+            f"运单已创建，运单号 {shipment.shipment_no}，"
+            f"待支付 {quote.total_cents / 100:.2f} 元。请前往运单详情完成支付。"
+        )
+
+    async def _maybe_confirm(
+        self,
+        conversation_id: UUID,
+        actor: CurrentUser,
+        content: str,
+        understanding: UnderstandingResult,
+    ) -> UnderstandingResult:
+        """草稿已报价待确认且整句为确认词时，确定性改写为 SENSITIVE_ACTION。"""
+        if understanding.primary_intent not in ("GENERAL_CHAT", "SENSITIVE_ACTION"):
+            return understanding
+        if not is_confirmation_word(content):
+            return understanding
+        draft = await self._session.scalar(
+            select(AgentShipmentDraft).where(
+                AgentShipmentDraft.conversation_id == conversation_id,
+                AgentShipmentDraft.owner_id == actor.id,
+            )
+        )
+        if draft is None or draft.status != "READY_FOR_CONFIRMATION":
+            return understanding
+        return understanding.model_copy(
+            update={
+                "intents": ["SENSITIVE_ACTION"],
+                "primary_intent": "SENSITIVE_ACTION",
+                "confidence": 1.0,
+                "requires_confirmation": True,
+                "recognition_path": "RULE",
+            }
+        )
 
     async def save_draft_address(
         self,

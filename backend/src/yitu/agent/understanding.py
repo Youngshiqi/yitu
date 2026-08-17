@@ -96,6 +96,22 @@ def preprocess_text(value: str) -> PreprocessedText:
     return PreprocessedText(original=value, normalized=normalized, tokens=tokens)
 
 
+# 确认词表：整句仅由一个确认词（可带句末标点）构成时才视为确认，避免「好的，我再看看」被误判。
+_CONFIRMATION_WORDS = frozenset(
+    {
+        "确认", "确定", "下单", "确认下单", "好的", "好", "可以", "行",
+        "没问题", "就这样", "同意", "嗯", "是的",
+    }
+)
+
+
+def is_confirmation_word(message: str) -> bool:
+    """确定性判定整句是否为下单确认词，供确认落库前改写路由。"""
+    normalized = preprocess_text(message).normalized
+    stripped = normalized.strip("。！？!?，,；;.~～、")
+    return stripped in _CONFIRMATION_WORDS
+
+
 @dataclass(frozen=True, slots=True)
 class FastPathRule:
     """只描述高精度规则；出现多个候选时必须放弃快速路径。"""
