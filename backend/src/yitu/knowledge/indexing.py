@@ -67,7 +67,16 @@ async def build_index_version(
                 index_version=version,
                 chunk_index=chunk.index,
                 content=chunk.content,
-                search_tokens=tokenize_for_search(chunk.content),
+                # 标题与章节路径一并入索引，让「指导目录」等结构词也能命中枚举清单类 chunk。
+                search_tokens=tokenize_for_search(
+                    " ".join(
+                        (
+                            chunk.content,
+                            chunk.title or "",
+                            " ".join(chunk.section_path),
+                        )
+                    )
+                ),
                 tokenizer_version=TOKENIZER_VERSION,
                 embedding=vectors[chunk.index],
                 embedding_model=selected_provider.model,

@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from yitu.knowledge.embedding import EmbeddingProvider, get_embedding_provider
 from yitu.knowledge.models import DocumentStatus, KnowledgeChunk, KnowledgeDocument
-from yitu.knowledge.tokenization import tokenize_for_search
+from yitu.knowledge.tokenization import expand_query_tokens, tokenize_for_query
 
 KEYWORD_WEIGHT = 0.55
 VECTOR_WEIGHT = 0.45
@@ -50,7 +50,7 @@ class KnowledgeRetriever:
     ) -> list[Evidence]:
         """分别召回关键词和向量候选，再按固定权重归一化融合。"""
         normalized = query.strip()
-        query_tokens = tokenize_for_search(normalized)
+        query_tokens = tokenize_for_query(normalized)
         if not normalized or not query_tokens:
             return []
 
@@ -99,7 +99,11 @@ class KnowledgeRetriever:
             text("'simple'"),
             KnowledgeChunk.search_tokens,
         )
-        search_query = func.plainto_tsquery(text("'simple'"), query_tokens)
+        # 列举型问句追加目录锚点词；以 | 连接的 OR 语义避免停用词零命中后仍因
+        # AND 收紧召回，多词命中由 ts_rank_cd 赋予更高排名。
+        keyword_tokens = expand_query_tokens(normalized, query_tokens)
+        or_query = " | ".join(f"'{token}'" for token in keyword_tokens.split())
+        search_query = func.to_tsquery(text("'simple'"), or_query)
         keyword_rank = func.ts_rank_cd(search_vector, search_query)
 
         vector_candidates = base_ids.order_by(vector_distance).limit(candidate_limit)

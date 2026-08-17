@@ -17,7 +17,7 @@ from yitu.knowledge.schemas import (
     KnowledgeDocumentView,
     KnowledgeReviewRequest,
 )
-from yitu.knowledge.service import get_document, upload_document
+from yitu.knowledge.service import delete_document, get_document, upload_document
 from yitu.platform.config import get_settings
 from yitu.platform.database import get_session
 
@@ -107,6 +107,13 @@ async def archive_document(document_id: UUID, user: CurrentUser = _admins, sessi
 @router.post("/documents/{document_id}/deactivate", response_model=KnowledgeDocumentView)
 async def deactivate_document(document_id: UUID, user: CurrentUser = _admins, session: AsyncSession = _session) -> KnowledgeDocumentView:
     return await _lifecycle(document_id, user, session, DocumentStatus.DEACTIVATED)
+
+
+@router.delete("/documents/{document_id}", status_code=204)
+async def delete_knowledge_document(document_id: UUID, user: CurrentUser = _admins, session: AsyncSession = _session) -> Response:
+    """删除文档、索引分块及对象存储中的原始文件与解析产物。"""
+    await delete_document(session, get_blob_store(), document_id, user)
+    return Response(status_code=204)
 
 
 @router.post("/documents/{document_id}/reparse", response_model=KnowledgeDocumentView)

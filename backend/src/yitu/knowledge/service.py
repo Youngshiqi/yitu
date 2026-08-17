@@ -1,3 +1,4 @@
+import logging
 from datetime import UTC, datetime
 from hashlib import sha256
 from uuid import UUID, uuid4
@@ -6,12 +7,16 @@ from botocore.exceptions import (  # type: ignore[import-untyped]
     BotoCoreError,
     ClientError,
 )
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from yitu.identity.models import Role
+from yitu.identity.service import CurrentUser
 from yitu.knowledge.blob_store import BlobStore
-from yitu.knowledge.models import DocumentStatus, KnowledgeDocument
+from yitu.knowledge.models import DocumentStatus, KnowledgeChunk, KnowledgeDocument
 from yitu.platform.errors import AppError
+
+logger = logging.getLogger(__name__)
 
 
 def validate_pdf(data: bytes, content_type: str | None, max_bytes: int) -> int:
@@ -69,3 +74,38 @@ async def get_document(session: AsyncSession, document_id: UUID) -> KnowledgeDoc
     if document is None:
         raise AppError("KNOWLEDGE_DOCUMENT_NOT_FOUND", "document not found", 404)
     return document
+
+
+async def delete_document(
+    session: AsyncSession,
+    store: BlobStore,
+    document_id: UUID,
+    user: CurrentUser,
+) -> None:
+    """删除文档、索引分块及对象存储中的原始文件与解析产物。"""
+    if user.role is not Role.OPERATIONS_ADMIN:
+        raise AppError("FORBIDDEN_ROLE", "role is not allowed", 403)
+    document = await session.get(KnowledgeDocument, document_id)
+    if document is None:
+        raise AppError("KNOWLEDGE_DOCUMENT_NOT_FOUND", "document not found", 404)
+    object_keys = [
+        key
+        for key in (
+            document.object_key,
+            document.source_artifact_key,
+            document.markdown_artifact_key,
+            document.result_archive_key,
+        )
+        if key
+    ]
+    await session.execute(
+        delete(KnowledgeChunk).where(KnowledgeChunk.document_id == document.id)
+    )
+    await session.delete(document)
+    await session.commit()
+    # 数据库删除已提交，对象清理失败不应让删除接口报错，残留对象可离线回收。
+    for key in object_keys:
+        try:
+            store.delete(key)
+        except (BotoCoreError, ClientError, OSError):
+            logger.warning("failed to delete knowledge blob object %s", key)

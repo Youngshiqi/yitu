@@ -196,3 +196,4 @@ export async function searchKnowledge(query: string, category?: string) { return
 export type KnowledgeDocumentContent = { document_id: string; filename: string; status: string; content: string; page_count?: number }
 export async function getKnowledgeContent(id: string) { return (await http.get(`/knowledge/documents/${id}/content`)).data as KnowledgeDocumentContent }
 export async function getKnowledgeFile(id: string): Promise<Blob> { const { data } = await http.get(`/knowledge/documents/${id}/file`, { responseType: 'blob' }); return data as Blob }
+export async function deleteKnowledgeDocument(id: string) { await http.delete(`/knowledge/documents/${id}`) }
