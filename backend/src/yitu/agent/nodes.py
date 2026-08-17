@@ -191,16 +191,14 @@ def _budget_refusal(state: AgentState) -> str | None:
         return TIMEOUT_REFUSAL
     if state.get("turn_count", 0) >= state.get("max_turns", 8):
         return BUDGET_REFUSAL
+    if state.get("tool_call_count", 0) >= state.get("max_tool_calls", 4):
+        return BUDGET_REFUSAL
     return None
 
 
 def _tool_budget_refusal(state: AgentState) -> str | None:
-    refusal = _budget_refusal(state)
-    if refusal is not None:
-        return refusal
-    if state.get("tool_call_count", 0) >= state.get("max_tool_calls", 4):
-        return BUDGET_REFUSAL
-    return None
+    """工具节点预算：与通用预算一致，工具调用次数超限同样拒绝。"""
+    return _budget_refusal(state)
 
 
 def _blocked_update(reason: str) -> AgentState:

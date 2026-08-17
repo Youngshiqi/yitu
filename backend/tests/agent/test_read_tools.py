@@ -15,7 +15,7 @@ from yitu.agent.tools.shipments import ShipmentReadInput, ShipmentReadTool
 from yitu.identity.models import Role
 from yitu.identity.service import CurrentUser
 from yitu.knowledge.retrieval import Evidence
-from yitu.shipments.enums import ShipmentStatus
+from yitu.shipments.enums import DeliveryMethod, ShipmentStatus
 from yitu.shipments.service import ShipmentReadView, ShipmentView
 from yitu.tracking.schemas import TrackingEventView
 
@@ -92,6 +92,7 @@ async def test_shipment_tool_uses_actor_scoped_application_service(
                 shipment_no="YT12345678",
                 owner_id=actor.id,
                 status=ShipmentStatus.IN_LINEHAUL,
+                delivery_method=DeliveryMethod.HOME_DELIVERY,
             ),
             tracking=[
                 TrackingEventView(
@@ -180,5 +181,6 @@ async def test_knowledge_tool_preserves_citations_and_handles_no_evidence(
     assert found.data is not None
     assert found.data.citations[0].document_id == document_id
     assert found.data.citations[0].score == 0.91
+    assert found.data.citations[0].section_path == ["第一章"]
     assert missing.found is False
     assert missing.data is not None and missing.data.citations == []

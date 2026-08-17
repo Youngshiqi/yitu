@@ -1,6 +1,7 @@
 """Agent 会话、记忆、草稿、授权和 SSE API。"""
 
 from collections.abc import AsyncIterator
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, Request
@@ -19,7 +20,7 @@ from yitu.agent.schemas import (
     MessageCreate,
     MessageView,
 )
-from yitu.agent.service import AgentConversationService
+from yitu.agent.service import AgentConversationService, get_default_checkpointer
 from yitu.agent.sse import (
     agent_message_events,
     encode_agent_event,
@@ -30,10 +31,21 @@ from yitu.identity.service import CurrentUser, get_current_user
 from yitu.platform.database import get_session
 from yitu.shipments.service import ShipmentView
 
+
+def get_checkpointer() -> Any:
+    """返回进程级单例 checkpointer，绑定草稿 loop 的跨请求 thread 状态。
+
+    生产可替换为 AsyncPostgresSaver（langgraph-checkpoint-postgres），复用
+    PostgreSQL 持久化草稿 loop 的对话轨迹；当前业务字段已存 DB，先用内存单例。
+    """
+    return get_default_checkpointer()
+
+
 router = APIRouter(prefix="/api/v1/agent/conversations", tags=["agent"])
 _session = Depends(get_session)
 _current_user = Depends(get_current_user)
 _model = Depends(get_model_adapter)
+_checkpointer = Depends(get_checkpointer)
 _last_event_id = Header(default=None, alias="Last-Event-ID")
 
 
@@ -131,8 +143,8 @@ async def issue_grant(conversation_id: UUID, user: CurrentUser = _current_user, 
 
 
 @router.post("/{conversation_id}/messages", response_model=AgentTurnView)
-async def send_message(conversation_id: UUID, request: MessageCreate, user: CurrentUser = _current_user, session: AsyncSession = _session, model: ModelAdapter = _model) -> AgentTurnView:
-    return await AgentConversationService(session).send_message(conversation_id, user, request.content, model)
+async def send_message(conversation_id: UUID, request: MessageCreate, user: CurrentUser = _current_user, session: AsyncSession = _session, model: ModelAdapter = _model, checkpointer: Any = _checkpointer) -> AgentTurnView:
+    return await AgentConversationService(session, checkpointer).send_message(conversation_id, user, request.content, model)
 
 
 @router.post("/{conversation_id}/messages/stream")
@@ -142,9 +154,10 @@ async def stream_message(
     user: CurrentUser = _current_user,
     session: AsyncSession = _session,
     model: ModelAdapter = _model,
+    checkpointer: Any = _checkpointer,
 ) -> StreamingResponse:
     """通过单个鉴权请求实时返回用户消息确认和助手增量文本。"""
-    service = AgentConversationService(session)
+    service = AgentConversationService(session, checkpointer)
     await service.get_owned(conversation_id, user)
 
     async def events() -> AsyncIterator[str]:

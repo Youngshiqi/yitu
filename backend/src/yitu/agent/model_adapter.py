@@ -1,5 +1,6 @@
 """可替换的 Agent 对话模型适配器。"""
 
+import json
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol, TypeVar, cast
@@ -21,11 +22,30 @@ StructuredT = TypeVar("StructuredT", bound=BaseModel)
 
 
 @dataclass(frozen=True, slots=True)
+class ToolCall:
+    """模型在工具调用循环中产出的单次工具调用。"""
+
+    id: str
+    name: str
+    arguments: dict[str, object]
+
+
+@dataclass(frozen=True, slots=True)
+class ToolCallResult:
+    """complete_with_tools 的结果：纯文本和/或工具调用。"""
+
+    content: str | None
+    tool_calls: tuple[ToolCall, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class ModelMessage:
     """发送给模型的最小消息结构。"""
 
     role: str
     content: str
+    tool_calls: tuple[ToolCall, ...] = ()
+    tool_call_id: str | None = None
 
 
 class ModelAdapter(Protocol):
@@ -38,6 +58,12 @@ class ModelAdapter(Protocol):
         messages: Sequence[ModelMessage],
         response_model: type[StructuredT],
     ) -> StructuredT: ...
+
+    async def complete_with_tools(
+        self,
+        messages: Sequence[ModelMessage],
+        tools: Sequence[dict[str, object]],
+    ) -> ToolCallResult: ...
 
     def stream(self, messages: Sequence[ModelMessage]) -> AsyncIterator[str]: ...
 
@@ -70,6 +96,15 @@ class FixedModelAdapter:
                 "draft": {},
             }
         )
+
+    async def complete_with_tools(
+        self,
+        messages: Sequence[ModelMessage],
+        tools: Sequence[dict[str, object]],
+    ) -> ToolCallResult:
+        """固定适配器不调用工具，只返回空工具调用。"""
+        del messages, tools
+        return ToolCallResult(content=None, tool_calls=())
 
     async def stream(self, messages: Sequence[ModelMessage]) -> AsyncIterator[str]:
         yield await self.complete(messages)
@@ -174,6 +209,53 @@ class OpenAICompatibleModelAdapter:
             raise ModelUnavailableError("Agent model is unavailable") from None
         return await self._complete_json_mode(messages, response_model)
 
+    async def complete_with_tools(
+        self,
+        messages: Sequence[ModelMessage],
+        tools: Sequence[dict[str, object]],
+    ) -> ToolCallResult:
+        """调用带工具白名单的模型，模型可返回纯文本或工具调用。"""
+        try:
+            response = await self._client.chat.completions.create(
+                model=self._model,
+                messages=self._request_messages(messages),
+                tools=cast(Any, list(tools)),
+                tool_choice="auto",
+            )
+        except (
+            APIConnectionError,
+            RateLimitError,
+            InternalServerError,
+            APIStatusError,
+            OpenAIError,
+        ):
+            raise ModelUnavailableError("Agent model is unavailable") from None
+        if not response.choices:
+            raise ModelUnavailableError("Agent model returned an empty response")
+        message = response.choices[0].message
+        tool_calls: list[ToolCall] = []
+        for call in message.tool_calls or ():
+            if call.type != "function":
+                continue
+            arguments = call.function.arguments or "{}"
+            try:
+                parsed = json.loads(arguments)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(parsed, dict):
+                continue
+            tool_calls.append(
+                ToolCall(
+                    id=call.id,
+                    name=call.function.name,
+                    arguments=parsed,
+                )
+            )
+        return ToolCallResult(
+            content=message.content,
+            tool_calls=tuple(tool_calls),
+        )
+
     async def _complete_json_mode(
         self,
         messages: Sequence[ModelMessage],
@@ -239,13 +321,27 @@ class OpenAICompatibleModelAdapter:
         messages: Sequence[ModelMessage],
     ) -> list[ChatCompletionMessageParam]:
         """在适配器边界把内部稳定消息转换为 SDK 联合类型。"""
-        return cast(
-            list[ChatCompletionMessageParam],
-            [
-                {"role": message.role, "content": message.content}
-                for message in messages
-            ],
-        )
+        result: list[dict[str, Any]] = []
+        for message in messages:
+            item: dict[str, Any] = {"role": message.role, "content": message.content}
+            if message.tool_calls:
+                item["tool_calls"] = [
+                    {
+                        "id": call.id,
+                        "type": "function",
+                        "function": {
+                            "name": call.name,
+                            "arguments": json.dumps(
+                                call.arguments, ensure_ascii=False
+                            ),
+                        },
+                    }
+                    for call in message.tool_calls
+                ]
+            if message.tool_call_id is not None:
+                item["tool_call_id"] = message.tool_call_id
+            result.append(item)
+        return cast(list[ChatCompletionMessageParam], result)
 
 
 def get_model_adapter() -> ModelAdapter:

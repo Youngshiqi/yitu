@@ -15,7 +15,7 @@ from yitu.identity.service import CurrentUser
 from yitu.platform.database import SessionFactory
 from yitu.platform.errors import AppError
 
-pytestmark = pytest.mark.asyncio(loop_scope="function")
+pytestmark = pytest.mark.asyncio(loop_scope="session")
 
 
 async def test_conversation_is_isolated_and_recovers_messages() -> None:

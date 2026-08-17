@@ -13,10 +13,11 @@ from yitu.identity.models import Role
 from yitu.identity.service import CurrentUser
 from yitu.platform.database import SessionFactory
 from yitu.platform.errors import AppError
+from yitu.pricing.models import PricingRule, QuoteSnapshot
 from yitu.pricing.schemas import QuoteView
 from yitu.shipments.enums import DeliveryMethod, PickupMethod
 
-pytestmark = pytest.mark.asyncio(loop_scope="function")
+pytestmark = pytest.mark.asyncio(loop_scope="session")
 TZ = ZoneInfo("Asia/Shanghai")
 
 
@@ -34,22 +35,44 @@ async def test_draft_update_tracks_missing_fields_and_invalidates_quote(
             DraftPatch(
                 pickup_method=PickupMethod.DOOR_PICKUP,
                 delivery_method=DeliveryMethod.HOME_DELIVERY,
+                origin_district_code="110101",
+                destination_district_code="310101",
+                estimated_weight_grams=1000,
+                estimated_length_cm=10,
+                estimated_width_cm=10,
+                estimated_height_cm=10,
+                package_category="文件",
+                package_description="合同",
             ),
         )
         assert draft.status == "INCOMPLETE"
         assert "sender_address_id" in draft.missing_fields
         assert "receiver_address_id" in draft.missing_fields
 
-        fake_quote = QuoteView(
-            id=uuid4(),
-            rule_version="v1",
-            input_snapshot={},
-            fee_items=[],
+        # 真实报价快照满足 draft.quote_id 外键约束，避免引用不存在的报价记录。
+        rule = PricingRule(
+            version=f"agent-rule-{uuid4()}",
+            route_code="TEST",
+            base_fee_cents=1000,
+            additional_fee_cents=0,
+            effective_from=now,
+        )
+        session.add(rule)
+        await session.flush()
+        quote = QuoteSnapshot(
+            owner_id=actor.id,
+            rule_id=rule.id,
+            rule_version=rule.version,
+            input_snapshot={"route_code": "TEST"},
+            fee_items=[{"code": "BASE", "amount_cents": 1000}],
             volume_weight_grams=1000,
             billable_weight_grams=1000,
             total_cents=1800,
             created_at=now,
         )
+        session.add(quote)
+        await session.flush()
+        fake_quote = QuoteView.model_validate(quote)
 
         async def fake_validate(
             service_self: DraftService,
@@ -84,7 +107,7 @@ async def test_draft_update_tracks_missing_fields_and_invalidates_quote(
         updated = await service.update(
             conversation_id,
             actor,
-            DraftPatch(actual_weight_grams=2500),
+            DraftPatch(estimated_weight_grams=2500),
         )
         assert updated.quote_id is None
         assert updated.quote_version is None
@@ -105,10 +128,12 @@ async def test_validate_rejects_other_users_address() -> None:
             "delivery_method": DeliveryMethod.HOME_DELIVERY.value,
             "origin_district_code": "110101",
             "destination_district_code": "310101",
-            "actual_weight_grams": 1000,
-            "length_cm": 10,
-            "width_cm": 10,
-            "height_cm": 10,
+            "estimated_weight_grams": 1000,
+            "estimated_length_cm": 10,
+            "estimated_width_cm": 10,
+            "estimated_height_cm": 10,
+            "package_category": "文件",
+            "package_description": "合同",
         }
         draft.missing_fields = []
 

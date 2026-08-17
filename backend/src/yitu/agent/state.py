@@ -1,6 +1,7 @@
 """LangGraph 使用的类型化 Agent 编排状态。"""
 
-from typing import Literal, TypedDict
+from operator import add
+from typing import Annotated, Literal, TypedDict
 
 AgentIntent = Literal[
     "GENERAL_CHAT",
@@ -53,3 +54,8 @@ class AgentState(TypedDict, total=False):
     max_tool_calls: int
     execution_started_at: float
     timeout_seconds: float
+    # 草稿 agentic loop 的输入、自研消息流（累积而非覆盖）与最终回复。
+    draft_missing_fields: list[str]
+    address_labels: list[str]
+    draft_turns: Annotated[list[dict[str, object]], add]
+    draft_response: str

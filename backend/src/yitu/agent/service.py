@@ -1,10 +1,12 @@
 """Agent 会话持久化和模型调用服务。"""
 
+import inspect
 from collections.abc import AsyncIterator
 from time import monotonic
 from typing import Any
 from uuid import UUID
 
+from langgraph.checkpoint.memory import MemorySaver
 from pydantic import BaseModel
 from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,16 +14,27 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from yitu.addresses.models import Address
 from yitu.addresses.service import list_addresses
 from yitu.agent.context import build_model_context
+from yitu.agent.draft_loop import build_draft_loop_graph
 from yitu.agent.drafts import DraftPatch, DraftService, DraftView
 from yitu.agent.graph import build_agent_graph
 from yitu.agent.model_adapter import ModelAdapter, ModelMessage, ModelUnavailableError
 from yitu.agent.models import AgentConversation, AgentMemory, AgentMessage
 from yitu.agent.nodes import security_refusal
+from yitu.agent.privacy import redact_text
+from yitu.agent.prompts import (
+    BUDGET_REFUSAL,
+    KNOWLEDGE_ANSWER_PROMPT,
+    KNOWLEDGE_NOT_FOUND_REPLY,
+)
 from yitu.agent.schemas import AgentTurnView, MessageView
 from yitu.agent.state import AgentState
 from yitu.agent.tools.base import ToolContext, ToolResult
 from yitu.agent.tools.identity import AddressBookTool, IdentityTool
-from yitu.agent.tools.knowledge import KnowledgeSearchInput, KnowledgeSearchTool
+from yitu.agent.tools.knowledge import (
+    KnowledgeCitation,
+    KnowledgeSearchInput,
+    KnowledgeSearchTool,
+)
 from yitu.agent.tools.shipments import ShipmentReadInput, ShipmentReadTool
 from yitu.agent.tracing import AgentTrace
 from yitu.agent.understanding import (
@@ -35,12 +48,36 @@ from yitu.platform.audit import AuditService
 from yitu.platform.clock import Clock
 from yitu.platform.errors import AppError
 
+_default_checkpointer = MemorySaver()  # 进程级单例，跨请求共享草稿 loop 的 thread 状态
+
+
+def get_default_checkpointer() -> Any:
+    """返回进程级单例 checkpointer，供 API 层依赖注入复用。"""
+    return _default_checkpointer
+
+
+async def _clear_thread(checkpointer: Any, thread_id: str) -> None:
+    """清空指定 thread 的 checkpoint，让每轮草稿 loop 从干净状态开始。
+
+    当前 MemorySaver.delete_thread 为同步，未来 PostgresSaver 可能为异步，
+    这里对 awaitable 结果统一 await，保证两种实现都能复用。
+    """
+    delete = getattr(checkpointer, "delete_thread", None)
+    if not callable(delete):
+        return
+    result = delete(thread_id)
+    if inspect.isawaitable(result):
+        await result
+
 
 class AgentConversationService:
     """维护用户隔离的会话历史，并协调可替换模型适配器。"""
 
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self, session: AsyncSession, checkpointer: Any = None) -> None:
         self._session = session
+        self._checkpointer = (
+            checkpointer if checkpointer is not None else _default_checkpointer
+        )
 
     async def create(
         self, actor: CurrentUser, *, title: str | None = None
@@ -204,11 +241,22 @@ class AgentConversationService:
                     ),
                     ToolContext(actor=actor, session=self._session),
                 )
-                reply_parts.append(
-                    await self._tool_reply(
-                        model, history_messages, memories, tool_result
+                if (
+                    tool_result.found
+                    and tool_result.data is not None
+                    and tool_result.data.citations
+                ):
+                    reply_parts.append(
+                        await self._knowledge_reply(
+                            model,
+                            history_messages,
+                            memories,
+                            tool_result.data.citations,
+                        )
                     )
-                )
+                else:
+                    # 无证据时不调用模型，杜绝凭空作答。
+                    reply_parts.append(KNOWLEDGE_NOT_FOUND_REPLY)
                 trace.record("tool.knowledge", found=tool_result.found)
             elif route == "read_tool":
                 tool_result = await ShipmentReadTool().execute(
@@ -246,11 +294,16 @@ class AgentConversationService:
                 trace.record("tool.identity", found=tool_result.found)
             elif route == "draft":
                 reply_parts.append(
-                    await self._update_draft_from_understanding(
-                        conversation.id, actor, understanding, addresses
+                    await self._run_draft_loop(
+                        conversation.id,
+                        actor,
+                        content,
+                        history_messages,
+                        addresses,
+                        model,
                     )
                 )
-                trace.record("draft.updated")
+                trace.record("draft.loop_completed")
             elif route == "respond" and understanding.clarification_question:
                 reply_parts.append(understanding.clarification_question)
                 trace.record("understanding.clarification")
@@ -330,6 +383,26 @@ class AgentConversationService:
             build_model_context(history, memories, [tool_result.model_dump_json()])
         )
 
+    async def _knowledge_reply(
+        self,
+        model: ModelAdapter,
+        history: list[ModelMessage],
+        memories: list[str],
+        citations: list[KnowledgeCitation],
+    ) -> str:
+        """把检索证据结构化为证据块，配合专用指令生成规则解答。"""
+        evidence = _format_knowledge_evidence(citations)
+        messages = build_model_context(history, memories)
+        messages.append(
+            ModelMessage(
+                role="system",
+                content=redact_text(
+                    KNOWLEDGE_ANSWER_PROMPT + "\n\n【知识证据】\n" + evidence
+                ),
+            )
+        )
+        return await model.complete(messages)
+
     async def stream_message(
         self,
         conversation_id: UUID,
@@ -396,6 +469,51 @@ class AgentConversationService:
             [address.label for address in addresses if address.label],
         )
         return result, addresses
+
+    async def _run_draft_loop(
+        self,
+        conversation_id: UUID,
+        actor: CurrentUser,
+        content: str,
+        history: list[ModelMessage],
+        addresses: list[Address],
+        model: ModelAdapter,
+    ) -> str:
+        """把草稿填写交给 agentic loop：模型通过 update_draft 增量填字段。"""
+        draft = await DraftService(self._session).get_or_create(conversation_id, actor)
+        thread_id = str(conversation_id)
+        # 草稿 loop 内部的 assistant/tool 往返只服务于单轮；跨请求上下文由 DB 的
+        # history 与草稿 payload 承担。每轮先清空该 thread 的 checkpoint，避免上一轮
+        # 的 draft_turns 经 add reducer 累积进本轮、覆盖掉新的 user_message。
+        await _clear_thread(self._checkpointer, thread_id)
+        loop_state: AgentState = {
+            "conversation_id": str(conversation_id),
+            "user_id": str(actor.id),
+            "user_message": content,
+            "history": [
+                {"role": message.role, "content": message.content}
+                for message in history
+            ],
+            "draft_missing_fields": draft.missing_fields,
+            "address_labels": [address.label for address in addresses if address.label],
+            "turn_count": 0,
+            "tool_call_count": 0,
+            "max_turns": 8,
+            "max_tool_calls": 4,
+            "execution_started_at": monotonic(),
+            "timeout_seconds": 30.0,
+        }
+        result = await build_draft_loop_graph(
+            model,
+            actor=actor,
+            session=self._session,
+            addresses=addresses,
+            checkpointer=self._checkpointer,
+        ).ainvoke(
+            loop_state,
+            config={"configurable": {"thread_id": thread_id}},
+        )
+        return result.get("draft_response") or BUDGET_REFUSAL
 
     async def _update_draft_from_understanding(
         self,
@@ -502,3 +620,23 @@ def _conversation_title(content: str) -> str:
     """使用首条用户消息生成稳定、紧凑的会话标题。"""
     normalized = " ".join(content.split())
     return normalized[:30]
+
+
+def _format_knowledge_evidence(citations: list[KnowledgeCitation]) -> str:
+    """把检索证据拼成结构化文本块，只保留回答所需字段，不夹带工具元数据。"""
+    blocks: list[str] = []
+    for index, citation in enumerate(citations, start=1):
+        location_parts = list(citation.section_path)
+        if citation.page_start is not None:
+            if citation.page_end is not None and citation.page_end != citation.page_start:
+                location_parts.append(f"第{citation.page_start}-{citation.page_end}页")
+            else:
+                location_parts.append(f"第{citation.page_start}页")
+        location = "/".join(part for part in location_parts if part)
+        header = f"【证据 {index}】《{citation.filename}》"
+        if citation.title:
+            header += f" {citation.title}"
+        if location:
+            header += f"（{location}）"
+        blocks.append(f"{header}\n{citation.content}")
+    return "\n\n".join(blocks)

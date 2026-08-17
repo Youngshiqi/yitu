@@ -175,11 +175,11 @@ class DraftService:
                         "quote_id",
                         "package_category",
                         "package_description",
-                        "actual_weight_grams",
-                        "length_cm",
-                        "width_cm",
-                "height_cm",
-                "declared_value_cents",
+                        "estimated_weight_grams",
+                        "estimated_length_cm",
+                        "estimated_width_cm",
+                        "estimated_height_cm",
+                        "declared_value_cents",
                         "special_instructions",
                     )
                     if key in payload

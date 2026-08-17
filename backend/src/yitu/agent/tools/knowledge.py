@@ -27,6 +27,7 @@ class KnowledgeCitation(BaseModel):
     filename: str
     index_version: int
     title: str | None
+    section_path: list[str] = Field(default_factory=list)
     page_start: int | None
     page_end: int | None
     content: str
@@ -60,6 +61,7 @@ class KnowledgeSearchTool:
                 filename=item.filename,
                 index_version=item.index_version,
                 title=item.title,
+                section_path=item.section_path,
                 page_start=item.page_start,
                 page_end=item.page_end,
                 content=item.content,
