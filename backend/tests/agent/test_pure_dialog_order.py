@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from yitu.addresses.models import Address
 from yitu.agent.drafts import DraftPatch, DraftService
+from yitu.agent.grants import GrantService
 from yitu.agent.models import (
     AgentActionGrant,
     AgentConversation,
@@ -23,11 +24,13 @@ from yitu.agent.understanding import (
     is_confirmation_word,
     is_save_address_word,
 )
+from yitu.agent.write_tools import AgentWriteService
 from yitu.demo.seed import seed_demo_pricing, seed_demo_users
 from yitu.identity.models import Role, Station
 from yitu.identity.service import CurrentUser
 from yitu.platform.clock import Clock
 from yitu.platform.database import SessionFactory
+from yitu.platform.errors import AppError
 from yitu.regions.models import AdministrativeRegion, RegionLevel
 from yitu.regions.service import resolve_region_by_names
 from yitu.shipments.enums import ShipmentStatus
@@ -487,3 +490,44 @@ async def test_maybe_save_address_promotes_ephemeral() -> None:
             address = await session.get(Address, UUID(str(address_id)))
             assert address is not None
             assert address.ephemeral is False
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_consume_grant_marks_draft_consumed_and_prevents_reissue() -> None:
+    """前端「确认下单」按钮路径：消费授权后草稿置为 SHIPMENT_CREATED，二次签发被拒。"""
+    async with SessionFactory() as session, session.begin():
+        actor, conversation_id = await _seed_actor_and_conversation(session)
+        await _seed_quoted_draft(session, actor, conversation_id)
+
+        grant = await GrantService(session).issue(conversation_id, actor)
+        shipment = await AgentWriteService(session).create_shipment(
+            grant.id, actor, str(uuid4())
+        )
+        assert shipment.status == ShipmentStatus.PENDING_PAYMENT
+
+        draft = await DraftService(session).get_or_create(conversation_id, actor)
+        assert draft.status == "SHIPMENT_CREATED"
+
+        # 同一草稿已下单，再次签发授权应被拒绝，避免重复建单。
+        with pytest.raises(AppError) as exc:
+            await GrantService(session).issue(conversation_id, actor)
+        assert exc.value.code == "AGENT_GRANT_NOT_READY"
+
+
+@pytest.mark.asyncio(loop_scope="session")
+async def test_describe_builds_chinese_summary() -> None:
+    """草稿视图的展示摘要应为中文标签并解析出地址，避免确认卡片显示英文字段。"""
+    async with SessionFactory() as session, session.begin():
+        actor, conversation_id = await _seed_actor_and_conversation(session)
+        await _seed_quoted_draft(session, actor, conversation_id)
+
+        draft = await DraftService(session).get_or_create(conversation_id, actor)
+        summary = await DraftService(session).describe(draft, actor)
+
+        labels = {item["label"] for item in summary}
+        assert "寄件地址" in labels
+        assert "收件地址" in labels
+        assert "预估重量" in labels
+        assert "尺寸" in labels
+        sender = next(item for item in summary if item["label"] == "寄件地址")
+        assert "寄件人" in sender["value"]

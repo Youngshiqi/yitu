@@ -116,8 +116,9 @@ async def list_messages(conversation_id: UUID, user: CurrentUser = _current_user
 async def get_draft(conversation_id: UUID, user: CurrentUser = _current_user, session: AsyncSession = _session) -> DraftView:
     await AgentConversationService(session).get_owned(conversation_id, user)
     draft = await DraftService(session).get_or_create(conversation_id, user)
+    view = await DraftService(session).view(draft, user)
     await session.commit()
-    return DraftView.model_validate(draft)
+    return view
 
 
 @router.patch("/{conversation_id}/draft", response_model=DraftView)

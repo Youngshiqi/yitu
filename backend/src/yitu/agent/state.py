@@ -56,6 +56,7 @@ class AgentState(TypedDict, total=False):
     timeout_seconds: float
     # 草稿 agentic loop 的输入、自研消息流（累积而非覆盖）与最终回复。
     draft_missing_fields: list[str]
+    draft_filled_fields: str
     address_labels: list[str]
     draft_turns: Annotated[list[dict[str, object]], add]
     draft_response: str

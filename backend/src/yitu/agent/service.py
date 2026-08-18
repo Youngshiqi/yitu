@@ -531,6 +531,12 @@ class AgentConversationService:
         让用户在 agentic loop 的最终模型调用阶段看到逐字输出。
         """
         draft = await DraftService(self._session).get_or_create(conversation_id, actor)
+        summary = await DraftService(self._session).describe(draft, actor)
+        filled_fields = (
+            "；".join(f"{item['label']}：{item['value']}" for item in summary)
+            if summary
+            else "（无）"
+        )
         thread_id = str(conversation_id)
         checkpointer = self._checkpointer
         if checkpointer is None:
@@ -545,6 +551,7 @@ class AgentConversationService:
                 for message in history
             ],
             "draft_missing_fields": draft.missing_fields,
+            "draft_filled_fields": filled_fields,
             "address_labels": [address.label for address in addresses if address.label],
             "turn_count": 0,
             "tool_call_count": 0,

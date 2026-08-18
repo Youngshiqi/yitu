@@ -159,7 +159,9 @@ def _initial_messages(state: AgentState) -> list[ModelMessage]:
     """首轮消息：草稿 loop 指令 + 最近历史 + 当前用户消息。"""
     missing = state.get("draft_missing_fields", [])
     labels = state.get("address_labels", [])
+    filled = state.get("draft_filled_fields", "")
     system = DRAFT_LOOP_PROMPT.format(
+        filled_fields=filled or "（无）",
         missing_fields="、".join(missing) if missing else "（无）",
         address_labels="、".join(labels) if labels else "（无）",
     )

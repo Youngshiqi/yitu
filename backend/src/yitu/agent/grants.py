@@ -94,10 +94,14 @@ class GrantService:
                 raise AppError("AGENT_GRANT_DRAFT_CHANGED", "草稿已变化，请重新确认", 409)
             if draft.quote_id != grant.quote_id or draft.quote_version != grant.quote_version:
                 raise AppError("AGENT_GRANT_QUOTE_CHANGED", "报价已变化，请重新确认", 409)
+            if draft.status != "READY_FOR_CONFIRMATION":
+                raise AppError("AGENT_GRANT_DRAFT_CONSUMED", "该草稿已下单，请勿重复创建运单", 409)
             command = CreateShipmentCommand.model_validate(grant.command_snapshot)
             if canonical_json_sha256(command.model_dump(mode="json")) != grant.command_hash:
                 raise AppError("AGENT_GRANT_SNAPSHOT_INVALID", "授权快照校验失败", 409)
             grant.consumed_at = now
+            # 消费即终结草稿：标记已下单，防止同一草稿再次签发授权重复建单。
+            draft.status = "SHIPMENT_CREATED"
             await self._session.flush()
             return command
         except AppError as error:

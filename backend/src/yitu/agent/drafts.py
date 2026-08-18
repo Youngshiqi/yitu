@@ -1,13 +1,14 @@
 """Agent 运单草稿的持久化、校验和报价前置服务。"""
 
 from datetime import datetime
+from typing import cast
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yitu.addresses.service import get_owned_address
+from yitu.addresses.service import address_response, get_owned_address
 from yitu.agent.models import AgentShipmentDraft
 from yitu.identity.service import CurrentUser
 from yitu.platform.clock import Clock
@@ -59,6 +60,7 @@ class DraftView(BaseModel):
     quote_id: UUID | None
     quote_version: str | None
     updated_at: datetime
+    summary: list[dict[str, str]] = Field(default_factory=list)
 
 
 class DraftValidationView(BaseModel):
@@ -227,7 +229,7 @@ class DraftService:
         return DraftValidationView(
             command=command,
             quote=quote,
-            draft=DraftView.model_validate(draft),
+            draft=await self.view(draft, actor),
         )
 
     @staticmethod
@@ -262,6 +264,60 @@ class DraftService:
             if not payload.get(field):
                 missing.append(field)
         return missing
+
+    async def describe(
+        self, draft: AgentShipmentDraft, actor: CurrentUser
+    ) -> list[dict[str, str]]:
+        """生成草稿已填字段的中文展示条目，供确认卡片与草稿 loop 提示复用。"""
+        payload = draft.payload
+        items: list[dict[str, str]] = []
+        for key, label in (
+            ("sender_address_id", "寄件地址"),
+            ("receiver_address_id", "收件地址"),
+        ):
+            value = payload.get(key)
+            if value:
+                text = await self._address_text(value, actor)
+                if text:
+                    items.append({"label": label, "value": text})
+        weight = payload.get("estimated_weight_grams")
+        if weight:
+            items.append({"label": "预估重量", "value": f"{cast(int, weight)} 克"})
+        dims = [
+            payload.get(k)
+            for k in ("estimated_length_cm", "estimated_width_cm", "estimated_height_cm")
+        ]
+        if all(v is not None for v in dims):
+            items.append(
+                {
+                    "label": "尺寸",
+                    "value": " × ".join(f"{cast(int, v)}" for v in dims) + " 厘米",
+                }
+            )
+        if payload.get("package_category"):
+            items.append({"label": "物品类型", "value": str(payload["package_category"])})
+        if payload.get("package_description"):
+            items.append({"label": "物品内容", "value": str(payload["package_description"])})
+        declared = payload.get("declared_value_cents")
+        if declared is not None:
+            items.append({"label": "声明价值", "value": f"{cast(int, declared) / 100:.2f} 元"})
+        if payload.get("special_instructions"):
+            items.append({"label": "特殊备注", "value": str(payload["special_instructions"])})
+        return items
+
+    async def view(self, draft: AgentShipmentDraft, actor: CurrentUser) -> DraftView:
+        """构建含中文展示摘要的草稿视图。"""
+        view = DraftView.model_validate(draft)
+        view.summary = await self.describe(draft, actor)
+        return view
+
+    async def _address_text(self, value: object, actor: CurrentUser) -> str | None:
+        try:
+            address = await get_owned_address(self._session, UUID(str(value)), actor)
+        except (ValueError, TypeError, AppError):
+            return None
+        resp = address_response(address)
+        return f"{resp['recipient_name']!s} {resp['phone']!s} {resp['full_address']!s}"
 
 
 def _uuid_value(payload: dict[str, object], key: str) -> UUID | None:
