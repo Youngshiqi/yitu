@@ -31,6 +31,7 @@ from yitu.agent.privacy import redact_text
 from yitu.agent.prompts import (
     KNOWLEDGE_ANSWER_PROMPT,
     KNOWLEDGE_NOT_FOUND_REPLY,
+    SYSTEM_PROMPT,
 )
 from yitu.agent.schemas import AgentTurnView, DraftAddressCreate, MessageView
 from yitu.agent.state import AgentState
@@ -41,6 +42,7 @@ from yitu.agent.tools.knowledge import (
     KnowledgeSearchInput,
     KnowledgeSearchTool,
 )
+from yitu.agent.tools.pricing import PricingRuleTool
 from yitu.agent.tools.shipments import ShipmentReadInput, ShipmentReadTool
 from yitu.agent.tracing import AgentTrace
 from yitu.agent.understanding import (
@@ -310,6 +312,17 @@ class AgentConversationService:
                     yield ("delta", {"content": chunk})
                 streamed = True
                 trace.record("tool.identity", found=tool_result.found)
+            elif route == "pricing_rule":
+                tool_result = await PricingRuleTool().execute(
+                    ToolContext(actor=actor, session=self._session)
+                )
+                async for chunk in self._stream_tool_reply(
+                    model, history_messages, memories, tool_result
+                ):
+                    reply_parts.append(chunk)
+                    yield ("delta", {"content": chunk})
+                streamed = True
+                trace.record("tool.pricing_rule", found=tool_result.found)
             elif route == "draft":
                 draft_holder: dict[str, object] = {}
                 async for chunk in self._stream_draft_loop(
@@ -433,17 +446,34 @@ class AgentConversationService:
         memories: list[str],
         citations: list[KnowledgeCitation],
     ) -> AsyncIterator[str]:
-        """把检索证据结构化为证据块，配合专用指令流式生成规则解答。"""
+        """把检索证据结构化为证据块，配合专用指令流式生成规则解答。
+
+        与普通闲聊不同，知识解答必须严格依据证据。这里不沿用 build_model_context
+        （那会把解答指令 append 在历史之后），而是把解答指令与证据作为紧随身份指令的
+        最高优先级 system 消息，避免模型被「寄件助手」闲聊身份和长历史带偏而答非所问。
+        """
         evidence = _format_knowledge_evidence(citations)
-        messages = build_model_context(history, memories)
-        messages.append(
+        messages = [
+            ModelMessage(role="system", content=SYSTEM_PROMPT.strip()),
             ModelMessage(
                 role="system",
                 content=redact_text(
                     KNOWLEDGE_ANSWER_PROMPT + "\n\n【知识证据】\n" + evidence
                 ),
+            ),
+        ]
+        if memories:
+            messages.append(
+                ModelMessage(
+                    role="system",
+                    content=redact_text("用户偏好：" + "；".join(memories[:10])),
+                )
             )
-        )
+        # 只回放最近一轮上下文（当前问题 + 上一条），避免长历史寄件闲聊稀释知识解答。
+        for message in history[-2:]:
+            messages.append(
+                ModelMessage(role=message.role, content=redact_text(message.content))
+            )
         async for chunk in model.stream(messages):
             if chunk:
                 yield chunk

@@ -59,6 +59,7 @@ def classify_intent_node(state: AgentState) -> AgentState:
     routes: dict[AgentIntent, tuple[AgentRisk, AgentRoute]] = {
         "GENERAL_CHAT": ("LOW", "respond"),
         "KNOWLEDGE_QUERY": ("LOW", "knowledge"),
+        "PRICING_QUERY": ("LOW", "pricing_rule"),
         "SHIPMENT_QUERY": ("PERSONAL_DATA", "read_tool"),
         "DRAFT_UPDATE": ("WRITE_ACTION", "draft"),
         "SENSITIVE_ACTION": ("WRITE_ACTION", "confirmation"),
@@ -78,6 +79,18 @@ def knowledge_node(state: AgentState) -> AgentState:
         "next_action": "SEARCH_PUBLISHED_KNOWLEDGE",
         "tool_call_count": state.get("tool_call_count", 0) + 1,
         "response": "好的，我来帮你查找已发布的物流规则。",
+    }
+
+
+def pricing_rule_node(state: AgentState) -> AgentState:
+    """为运费规则查询工具产出动作，金额以确定性业务服务为准。"""
+    refusal = _tool_budget_refusal(state)
+    if refusal is not None:
+        return _blocked_update(refusal)
+    return {
+        "next_action": "QUERY_PRICING_RULES",
+        "tool_call_count": state.get("tool_call_count", 0) + 1,
+        "response": "好的，我来帮你查询当前生效的运费规则。",
     }
 
 
@@ -159,6 +172,7 @@ def route_after_classification(state: AgentState) -> AgentRoute:
     if route in {
         "respond",
         "knowledge",
+        "pricing_rule",
         "read_tool",
         "draft",
         "confirmation",

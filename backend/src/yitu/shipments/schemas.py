@@ -23,7 +23,6 @@ class ShipmentDraft(BaseModel):
     estimated_length_cm: int | None = Field(default=None, gt=0)
     estimated_width_cm: int | None = Field(default=None, gt=0)
     estimated_height_cm: int | None = Field(default=None, gt=0)
-    declared_value_cents: int = Field(default=0, ge=0)
     special_instructions: str | None = Field(default=None, max_length=2000)
 
 

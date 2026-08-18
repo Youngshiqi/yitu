@@ -14,6 +14,7 @@ from yitu.agent.model_adapter import ModelAdapter, ModelMessage
 IntentName = Literal[
     "GENERAL_CHAT",
     "KNOWLEDGE_QUERY",
+    "PRICING_QUERY",
     "SHIPMENT_QUERY",
     "DRAFT_UPDATE",
     "SENSITIVE_ACTION",
@@ -40,7 +41,6 @@ class DraftCandidate(BaseModel):
     length_cm: int | None = Field(default=None, gt=0)
     width_cm: int | None = Field(default=None, gt=0)
     height_cm: int | None = Field(default=None, gt=0)
-    declared_value_cents: int | None = Field(default=None, ge=0)
     package_category: str | None = Field(default=None, max_length=64)
     package_description: str | None = Field(default=None, max_length=2000)
     special_instructions: str | None = Field(default=None, max_length=2000)
@@ -155,6 +155,14 @@ _FAST_PATH_RULES = (
         ),
     ),
     FastPathRule(
+        "PRICING_QUERY",
+        (
+            re.compile(r"(?:运费|快递费|寄费|收费).{0,6}(?:规则|标准|怎么|如何|多少)"),
+            re.compile(r"(?:首重|续重)"),
+            re.compile(r"(?:计费|计价).{0,4}(?:规则|标准|方式)"),
+        ),
+    ),
+    FastPathRule(
         "DRAFT_UPDATE",
         (
             re.compile(r"(?:从|寄件地址).{1,30}(?:寄到|送到|收件地址)"),
@@ -263,12 +271,13 @@ def _unique_label(value: str, address_labels: list[str]) -> str | None:
 
 
 UNDERSTANDING_PROMPT = """你是 Yitu 物流的意图识别器。调用 classify_logistics_intent 函数返回结果，不直接回答用户。
-可选意图只有 GENERAL_CHAT、KNOWLEDGE_QUERY、SHIPMENT_QUERY、DRAFT_UPDATE、SENSITIVE_ACTION、ADDRESS_QUERY、IDENTITY_QUERY。
+可选意图只有 GENERAL_CHAT、KNOWLEDGE_QUERY、PRICING_QUERY、SHIPMENT_QUERY、DRAFT_UPDATE、SENSITIVE_ACTION、ADDRESS_QUERY、IDENTITY_QUERY。
 支持口语、同义表达、省略和多意图；primary_intent 表示当前最应该先处理的意图。
 创建运单、确认下单、支付、退款、取消或其他改变业务状态的请求属于 SENSITIVE_ACTION，requires_confirmation 必须为 true。
 物流规则、禁限寄、包装、赔付、保价和时效政策属于 KNOWLEDGE_QUERY。
+运费计费规则（首重、续重、线路费率、上门取件费等）属于 PRICING_QUERY。
 本人运单状态、轨迹、费用或预计到达属于 SHIPMENT_QUERY。
-提供或修改寄件地址、收件地址、重量、尺寸、声明价值属于 DRAFT_UPDATE。
+提供或修改寄件地址、收件地址、重量、尺寸属于 DRAFT_UPDATE。
 查询本人地址簿、常用地址或有哪些地址属于 ADDRESS_QUERY。
 查询当前账号身份、角色或所属网点属于 IDENTITY_QUERY。
 地址只能原样提取为地址标签，禁止生成数据库 ID。重量换算为克，金额换算为分；未明确提供的字段必须为 null。
@@ -280,6 +289,8 @@ UNDERSTANDING_PROMPT = """你是 Yitu 物流的意图识别器。调用 classify
 结果：primary_intent=SHIPMENT_QUERY, confidence=0.95
 用户：电脑寄出去要怎么包装才稳妥
 结果：primary_intent=KNOWLEDGE_QUERY, confidence=0.94, knowledge_query=电脑寄件包装要求
+用户：运费怎么算，首重和续重各多少钱
+结果：primary_intent=PRICING_QUERY, confidence=0.95
 用户：从公司寄到家，2.5公斤，箱子30乘20乘15
 结果：primary_intent=DRAFT_UPDATE, confidence=0.97, draft.sender_address_label=公司, draft.receiver_address_label=家, draft.actual_weight_grams=2500
 用户：我有哪些地址可以寄

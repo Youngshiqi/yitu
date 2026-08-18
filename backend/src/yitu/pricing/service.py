@@ -20,7 +20,12 @@ from yitu.pricing.policy import (
     calculate_quote,
     route_code,
 )
-from yitu.pricing.schemas import QuoteRequest, QuoteView, ReweighRequest
+from yitu.pricing.schemas import (
+    PricingRuleCreate,
+    QuoteRequest,
+    QuoteView,
+    ReweighRequest,
+)
 
 
 class PricingService:
@@ -72,6 +77,41 @@ class PricingService:
         )
         if rule is None:
             raise AppError("ROUTE_NOT_SUPPORTED", "当前线路暂不支持报价", 422)
+        return rule
+
+    async def list_active_rules(self) -> list[PricingRule]:
+        """返回每条线路当前生效的最新规则，供运费规则查询工具读取。"""
+        now = Clock.now()
+        rows = (
+            await self._session.scalars(
+                select(PricingRule)
+                .where(
+                    PricingRule.effective_from <= now,
+                    or_(PricingRule.effective_to.is_(None), PricingRule.effective_to > now),
+                )
+                .order_by(PricingRule.effective_from.desc())
+            )
+        ).all()
+        latest: dict[str, PricingRule] = {}
+        for rule in rows:
+            latest.setdefault(rule.route_code, rule)
+        return list(latest.values())
+
+    async def list_rules(self) -> list[PricingRule]:
+        """列出全部价格规则（含历史与未来版本），供运营配置界面展示。"""
+        return list(
+            (
+                await self._session.scalars(
+                    select(PricingRule).order_by(PricingRule.effective_from.desc())
+                )
+            ).all()
+        )
+
+    async def create_rule(self, payload: PricingRuleCreate) -> PricingRule:
+        """创建一条新的价格规则版本。"""
+        rule = PricingRule(**payload.model_dump())
+        self._session.add(rule)
+        await self._session.flush()
         return rule
 
 

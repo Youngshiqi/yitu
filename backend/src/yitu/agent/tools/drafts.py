@@ -24,7 +24,6 @@ class UpdateDraftToolArgs(BaseModel):
     estimated_length_cm: int | None = Field(default=None, gt=0)
     estimated_width_cm: int | None = Field(default=None, gt=0)
     estimated_height_cm: int | None = Field(default=None, gt=0)
-    declared_value_cents: int | None = Field(default=None, ge=0)
     package_category: str | None = Field(default=None, max_length=64)
     package_description: str | None = Field(default=None, max_length=2000)
     special_instructions: str | None = Field(default=None, max_length=2000)

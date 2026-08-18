@@ -32,20 +32,18 @@ async def test_quote_uses_volume_weight_and_service_fees() -> None:
             length_cm=30,
             width_cm=20,
             height_cm=20,
-            declared_value_cents=100_000,
         )
     )
 
     assert result.rule_version == "pricing-demo-v1"
     assert result.volume_weight_grams == 2_000
     assert result.billable_weight_grams == 2_000
-    assert result.total_cents == 3_200
+    assert result.total_cents == 2_900
     assert [(item.code, item.amount_cents) for item in result.items] == [
         ("BASE_FEE", 1_500),
         ("ADDITIONAL_WEIGHT", 1_200),
         ("PICKUP_SERVICE", 300),
         ("STATION_PICKUP_DISCOUNT", -100),
-        ("INSURANCE", 300),
     ]
 
 

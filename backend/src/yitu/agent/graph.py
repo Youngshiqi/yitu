@@ -12,6 +12,7 @@ from yitu.agent.nodes import (
     identity_tool_node,
     knowledge_node,
     load_context_node,
+    pricing_rule_node,
     read_tool_node,
     response_node,
     route_after_classification,
@@ -25,6 +26,7 @@ def build_agent_graph() -> CompiledStateGraph[AgentState, None, AgentState, Agen
     graph.add_node("load_context", load_context_node)
     graph.add_node("classify_intent", classify_intent_node)
     graph.add_node("knowledge", knowledge_node)
+    graph.add_node("pricing_rule", pricing_rule_node)
     graph.add_node("read_tool", read_tool_node)
     graph.add_node("address_tool", address_tool_node)
     graph.add_node("identity_tool", identity_tool_node)
@@ -40,6 +42,7 @@ def build_agent_graph() -> CompiledStateGraph[AgentState, None, AgentState, Agen
         route_after_classification,
         {
             "knowledge": "knowledge",
+            "pricing_rule": "pricing_rule",
             "read_tool": "read_tool",
             "address_tool": "address_tool",
             "identity_tool": "identity_tool",
@@ -51,6 +54,7 @@ def build_agent_graph() -> CompiledStateGraph[AgentState, None, AgentState, Agen
     )
     for terminal_node in (
         "knowledge",
+        "pricing_rule",
         "read_tool",
         "address_tool",
         "identity_tool",

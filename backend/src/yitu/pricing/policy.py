@@ -16,7 +16,6 @@ class PricingInput:
     length_cm: int
     width_cm: int
     height_cm: int
-    declared_value_cents: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,9 +82,6 @@ def calculate_quote(payload: PricingInput, rule: PricingRuleData | None = None) 
         items.append(FeeItem("PICKUP_SERVICE", 300))
     if payload.delivery_method == "STATION_PICKUP":
         items.append(FeeItem("STATION_PICKUP_DISCOUNT", -100))
-    if payload.declared_value_cents:
-        items.append(FeeItem("INSURANCE", max(100, ceil(payload.declared_value_cents * 3 / 1000)))
-)
     if selected_rule.remote_surcharge_cents:
         items.append(FeeItem("REMOTE_SURCHARGE", selected_rule.remote_surcharge_cents))
     return QuoteCalculation(selected_rule.version, selected_route, volume_weight, billable_weight, tuple(items), max(0, sum(item.amount_cents for item in items)))
@@ -94,5 +90,3 @@ def calculate_quote(payload: PricingInput, rule: PricingRuleData | None = None) 
 def _validate_input(payload: PricingInput) -> None:
     if payload.actual_weight_grams <= 0 or any(value <= 0 for value in (payload.length_cm, payload.width_cm, payload.height_cm)):
         raise ValueError("重量和尺寸必须大于零")
-    if payload.declared_value_cents < 0:
-        raise ValueError("声明价值不能为负数")

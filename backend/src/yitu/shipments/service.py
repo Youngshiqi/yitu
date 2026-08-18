@@ -200,7 +200,6 @@ class ShipmentApplicationService:
                 estimated_length_cm=draft.estimated_length_cm,
                 estimated_width_cm=draft.estimated_width_cm,
                 estimated_height_cm=draft.estimated_height_cm,
-                declared_value_cents=draft.declared_value_cents,
                 special_instructions=draft.special_instructions,
             )
             self._session.add(package)

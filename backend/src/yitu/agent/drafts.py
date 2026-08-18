@@ -40,7 +40,6 @@ class DraftPatch(BaseModel):
     estimated_length_cm: int | None = Field(default=None, gt=0)
     estimated_width_cm: int | None = Field(default=None, gt=0)
     estimated_height_cm: int | None = Field(default=None, gt=0)
-    declared_value_cents: int | None = Field(default=None, ge=0)
     package_category: str | None = Field(default=None, max_length=64)
     package_description: str | None = Field(default=None, max_length=2000)
     special_instructions: str | None = Field(default=None, max_length=2000)
@@ -181,7 +180,6 @@ class DraftService:
                         "estimated_length_cm",
                         "estimated_width_cm",
                         "estimated_height_cm",
-                        "declared_value_cents",
                         "special_instructions",
                     )
                     if key in payload
@@ -209,7 +207,6 @@ class DraftService:
                 "length_cm": draft.payload["estimated_length_cm"],
                 "width_cm": draft.payload["estimated_width_cm"],
                 "height_cm": draft.payload["estimated_height_cm"],
-                "declared_value_cents": draft.payload.get("declared_value_cents", 0),
             }
         )
         quote = await PricingService(self._session).quote(
@@ -298,9 +295,6 @@ class DraftService:
             items.append({"label": "物品类型", "value": str(payload["package_category"])})
         if payload.get("package_description"):
             items.append({"label": "物品内容", "value": str(payload["package_description"])})
-        declared = payload.get("declared_value_cents")
-        if declared is not None:
-            items.append({"label": "声明价值", "value": f"{cast(int, declared) / 100:.2f} 元"})
         if payload.get("special_instructions"):
             items.append({"label": "特殊备注", "value": str(payload["special_instructions"])})
         return items
