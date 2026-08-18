@@ -38,7 +38,6 @@ export type Quote = { id: string; total_cents: number; currency: string; line_it
 export type SLARule = { id: string; version: string; route_code: string; service_type: string; stage: string; target_work_hours?: number | null; target_natural_hours?: number | null; effective_from: string; effective_to?: string | null; active: boolean }
 export type PricingRule = { id: string; version: string; route_code: string; base_fee_cents: number; additional_fee_cents: number; remote_surcharge_cents: number; effective_from: string; effective_to?: string | null }
 export type ExceptionCase = { id: string; shipment_id: string; case_type: string; severity: string; status: string; description: string; blocks_fulfillment: boolean; assigned_to?: string; opened_at: string }
-export type DeadLetter = { id: string; event_id: string; event_type: string; business_id: string; attempts: number; last_error: string; failed_at: string; replayed_at?: string; suggested_action: string }
 export type KnowledgeDocument = { id: string; filename: string; content_type: string; size_bytes: number; sha256: string; status: string; page_count?: number; error_message?: string; mineru_task_id?: string; created_at: string; updated_at: string; category?: string; published_at?: string }
 
 // ---- 认证 ----
@@ -198,10 +197,6 @@ export async function createSlaRule(payload: Omit<SLARule, 'id'>) { return (awai
 // ---- 运费规则 ----
 export async function listPricingRules() { return (await http.get('/pricing/rules')).data as PricingRule[] }
 export async function createPricingRule(payload: Omit<PricingRule, 'id'>) { return (await http.post('/pricing/rules', payload)).data as PricingRule }
-
-// ---- 死信 ----
-export async function listDeadLetters(params?: Record<string, unknown>) { return (await http.get('/admin/dead-letters', { params })).data as DeadLetter[] }
-export async function replayDeadLetter(id: string) { return (await http.post(`/admin/dead-letters/${id}/replay`)).data }
 
 // ---- 知识库 ----
 export async function listKnowledgeDocuments(params?: Record<string, unknown>) { return (await http.get('/knowledge/documents', { params })).data as KnowledgeDocument[] }

@@ -115,7 +115,7 @@ class AgentConversationService:
             )
             .order_by(AgentConversation.updated_at.desc(), AgentConversation.id)
         )
-        return list((await self._session.scalars(statement)).all())
+        return list[AgentConversation]((await self._session.scalars(statement)).all())
 
     async def get_owned(
         self, conversation_id: UUID, actor: CurrentUser

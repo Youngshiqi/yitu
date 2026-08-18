@@ -339,12 +339,17 @@ class ShipmentApplicationService:
                 | (Shipment.destination_station_id == actor.station_id),
             )
         elif actor.role is Role.COURIER:
+            # 快递员可查看本网点任务（含待接单共享任务）以及本人已接单任务，
+            # 地址是完成取/派任务的前提，范围与任务列表一致（station_id 匹配）。
+            if actor.station_id is None:
+                raise AppError("FORBIDDEN_STATION_SCOPE", "快递员缺少所属网点", 403)
             statement = select(Shipment).where(
                 Shipment.id == shipment_id,
                 Shipment.id.in_(
                     select(CourierTask.shipment_id).where(
                         CourierTask.shipment_id == shipment_id,
-                        CourierTask.assignee_id == actor.id,
+                        (CourierTask.assignee_id == actor.id)
+                        | (CourierTask.station_id == actor.station_id),
                     )
                 ),
             )

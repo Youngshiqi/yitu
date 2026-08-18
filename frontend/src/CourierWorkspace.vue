@@ -1,16 +1,18 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Bell, Box, Check, CircleCheck, Connection, Refresh, Setting, Van, Warning } from '@element-plus/icons-vue'
+import { Bell, Box, Check, CircleCheck, Connection, Refresh, Setting, Van, View, Warning } from '@element-plus/icons-vue'
 import {
   acceptCourierTask,
   confirmCourierDelivery,
   confirmPickupWithReweigh,
+  getShipment,
   listCourierTasks,
   listStations,
   reportException,
   startCourierDelivery,
   type CourierTask,
+  type ShipmentDetail,
 } from './api'
 import {
   loadReadTaskMessageIds,
@@ -44,6 +46,10 @@ const reweighForm = ref({
   actual_height_cm: 20,
   remark: '',
 })
+
+const detailDialog = ref(false)
+const detailLoading = ref(false)
+const detail = ref<ShipmentDetail | null>(null)
 
 const taskPage = ref(1)
 const taskPageSize = 5
@@ -133,6 +139,34 @@ async function submitReweigh() {
   } catch (error: any) {
     ElMessage.error(error.response?.data?.message || '复称提交失败')
   }
+}
+
+async function openDetail(task: CourierTask) {
+  selectedTask.value = task
+  detail.value = null
+  detailDialog.value = true
+  detailLoading.value = true
+  try {
+    detail.value = await getShipment(task.shipment_id)
+  } catch (error: any) {
+    ElMessage.error(error.response?.data?.message || '运单详情加载失败')
+  } finally {
+    detailLoading.value = false
+  }
+}
+
+function formatWeight(grams?: number | null): string {
+  if (grams == null) return '—'
+  return grams >= 1000 ? `${(grams / 1000).toFixed(2)} kg` : `${grams} g`
+}
+
+function packageDimensions(pkg: ShipmentDetail['package']): string {
+  if (!pkg) return '—'
+  const l = pkg.actual_length_cm ?? pkg.estimated_length_cm
+  const w = pkg.actual_width_cm ?? pkg.estimated_width_cm
+  const h = pkg.actual_height_cm ?? pkg.estimated_height_cm
+  if (l == null && w == null && h == null) return '—'
+  return `${l ?? '—'} × ${w ?? '—'} × ${h ?? '—'} cm`
 }
 
 function openSigner(task: CourierTask) {
@@ -275,8 +309,8 @@ onMounted(loadTasks)
 
           <div class="courier-task-list">
             <article v-for="task in pagedTasks" :key="task.id" class="courier-task">
-              <div class="task-sequence"><span>{{ task.task_type === 'PICKUP' ? 'P' : 'D' }}</span><i></i></div>
-              <div class="task-copy">
+              <div class="task-sequence" @click="openDetail(task)"><span>{{ task.task_type === 'PICKUP' ? 'P' : 'D' }}</span><i></i></div>
+              <div class="task-copy" @click="openDetail(task)">
                 <div class="task-heading">
                   <div>
                     <small>{{ task.task_type === 'PICKUP' ? '揽收任务' : '派送任务' }}</small>
@@ -292,6 +326,7 @@ onMounted(loadTasks)
                 </div>
               </div>
               <div class="task-actions">
+                <el-button text type="primary" @click="openDetail(task)"><View />详情</el-button>
                 <el-button v-if="task.status !== 'COMPLETED' && task.status !== 'CANCELLED'" type="primary" @click="execute(task)">
                   {{ primaryText(task) }}
                 </el-button>
@@ -318,6 +353,55 @@ onMounted(loadTasks)
           />
         </div>
       </section>
+
+    <el-dialog v-model="detailDialog" title="运单详情" width="560px" class="shipment-detail-dialog">
+      <div v-loading="detailLoading" class="shipment-detail">
+        <template v-if="detail">
+          <div class="detail-head">
+            <div>
+              <small>{{ selectedTask?.task_type === 'PICKUP' ? '揽收任务' : '派送任务' }}</small>
+              <h3 class="detail-no">{{ detail.shipment.shipment_no }}</h3>
+            </div>
+            <el-tag v-if="selectedTask" :type="selectedTask.status === 'COMPLETED' ? 'success' : selectedTask.status === 'AVAILABLE' ? 'warning' : 'primary'">
+              {{ statusText(selectedTask.status) }}
+            </el-tag>
+          </div>
+
+          <div class="detail-section">
+            <h4>寄件信息（取件地址）</h4>
+            <template v-if="detail.sender_address">
+              <p class="detail-person">{{ detail.sender_address.recipient_name }} · {{ detail.sender_address.phone }}</p>
+              <p class="detail-addr">{{ detail.sender_address.full_address }}</p>
+            </template>
+            <p v-else class="detail-empty">无寄件地址（网点寄件）</p>
+          </div>
+
+          <div class="detail-section">
+            <h4>收件信息（派送地址）</h4>
+            <template v-if="detail.receiver_address">
+              <p class="detail-person">{{ detail.receiver_address.recipient_name }} · {{ detail.receiver_address.phone }}</p>
+              <p class="detail-addr">{{ detail.receiver_address.full_address }}</p>
+            </template>
+            <p v-else class="detail-empty">无收件地址（网点自提）</p>
+          </div>
+
+          <div v-if="detail.package" class="detail-section">
+            <h4>包裹信息</h4>
+            <div class="detail-grid">
+              <span>类别：{{ detail.package.category || '—' }}</span>
+              <span>重量：{{ formatWeight(detail.package.actual_weight_grams ?? detail.package.estimated_weight_grams) }}</span>
+              <span>尺寸：{{ packageDimensions(detail.package) }}</span>
+            </div>
+            <p v-if="detail.package.description" class="detail-note">描述：{{ detail.package.description }}</p>
+            <p v-if="detail.package.special_instructions" class="detail-note">备注：{{ detail.package.special_instructions }}</p>
+          </div>
+        </template>
+        <el-empty v-else-if="!detailLoading" description="暂无详情" />
+      </div>
+      <template #footer>
+        <el-button @click="detailDialog = false">关闭</el-button>
+      </template>
+    </el-dialog>
 
     <el-dialog v-model="signerDialog" title="确认签收" width="430px">
       <p class="dialog-tip">确认包裹已送达，然后填写签收人姓名。</p>
@@ -467,5 +551,74 @@ onMounted(loadTasks)
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.task-sequence,
+.task-copy {
+  cursor: pointer;
+}
+
+.task-copy:hover .task-heading h3 {
+  color: var(--el-color-primary);
+}
+
+.shipment-detail {
+  min-height: 120px;
+}
+
+.detail-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.detail-head small {
+  color: var(--el-text-color-secondary);
+}
+
+.detail-no {
+  margin: 2px 0 0;
+  font-size: 18px;
+}
+
+.detail-section {
+  border-top: 1px solid var(--el-border-color-lighter);
+  padding: 12px 0;
+}
+
+.detail-section h4 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+}
+
+.detail-person {
+  margin: 0 0 4px;
+  font-weight: 600;
+}
+
+.detail-addr {
+  margin: 0;
+  color: var(--el-text-color-regular);
+  line-height: 1.6;
+}
+
+.detail-empty {
+  margin: 0;
+  color: var(--el-text-color-placeholder);
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 6px 16px;
+}
+
+.detail-note {
+  margin: 8px 0 0;
+  color: var(--el-text-color-secondary);
+  line-height: 1.6;
 }
 </style>
