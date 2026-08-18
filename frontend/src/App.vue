@@ -3,7 +3,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowRight, Bell, Box, ChatDotRound, Delete, Edit, Expand, Fold, Location, Plus, Search, Setting, User } from '@element-plus/icons-vue'
 import MarkdownIt from 'markdown-it'
-import { consumeAgentGrant, createAddress, createConversation, createQuote, createShipment, deleteAddress, deleteConversation, getAgentDraft, getQuote, getShipment, issueAgentGrant, listAddresses, listConversations, listMessages, listNotifications, listRegions, listShipments, login, markNotificationRead, me, payQuote, paySupplement, streamAgentMessage, tracking, updateAddress, validateAgentDraft, type Address, type AddressInput, type AgentConversation, type AgentMessage, type Notification, type Region, type Shipment, type ShipmentDetail } from './api'
+import { consumeAgentGrant, createAddress, createConversation, createQuote, createShipment, deleteAddress, deleteConversation, demoLogin, getAgentDraft, getQuote, getShipment, issueAgentGrant, listAddresses, listConversations, listMessages, listNotifications, listRegions, listShipments, login, markNotificationRead, me, payQuote, paySupplement, register, streamAgentMessage, tracking, updateAddress, validateAgentDraft, type Address, type AddressInput, type AgentConversation, type AgentMessage, type Notification, type Region, type Shipment, type ShipmentDetail } from './api'
 import StationOperatorWorkspace from './StationOperatorWorkspace.vue'
 import CourierWorkspace from './CourierWorkspace.vue'
 import OperationsWorkspace from './OperationsWorkspace.vue'
@@ -20,7 +20,10 @@ const selected = ref<ShipmentDetail | null>(null)
 const timeline = ref<any[]>([])
 const page = ref(1)
 const query = ref('')
+const loginMode = ref<'login' | 'register' | 'demo'>('login')
 const loginForm = ref({ login_name: 'customer.demo', password: 'YituDemo2026!' })
+const loginPhoneForm = ref({ phone: '', password: '' })
+const registerForm = ref({ phone: '', password: '', display_name: '' })
 // 演示环境身份列表；正式用户名密码登录接入后可替换为后端用户搜索。
 const loginAccounts = [
   { login_name: 'customer.demo', label: '客户 · customer.demo', role: 'CUSTOMER' },
@@ -133,7 +136,16 @@ async function loadData() {
     shipments.value = ship.items ?? []; total.value = ship.total ?? 0; addresses.value = addr; notifications.value = notice; conversations.value = chats
   } catch { ElMessage.error('数据加载失败，请确认后端服务已启动') } finally { loading.value = false }
 }
-async function doLogin() { try { await login(loginForm.value.login_name, loginForm.value.password); loggedIn.value = true; user.value = normalizeUser(await me()); if (user.value?.role === 'CUSTOMER') await loadData() } catch { ElMessage.error('账号或密码错误') } }
+async function doLogin() {
+  try {
+    if (loginMode.value === 'register') await register(registerForm.value.phone, registerForm.value.password, registerForm.value.display_name.trim() || undefined)
+    else if (loginMode.value === 'demo') await demoLogin(loginForm.value.login_name, loginForm.value.password)
+    else await login(loginPhoneForm.value.phone, loginPhoneForm.value.password)
+    loggedIn.value = true
+    user.value = normalizeUser(await me())
+    if (user.value?.role === 'CUSTOMER') await loadData()
+  } catch (error: any) { ElMessage.error(error.response?.data?.message || '操作失败，请稍后重试') }
+}
 function logout() { localStorage.removeItem('yitu_token'); loggedIn.value = false; user.value = null }
 function handleAuthExpired() { loggedIn.value = false; user.value = null; ElMessage.warning('登录状态已失效，请重新登录') }
 async function openShipment(item: Shipment) {
@@ -316,7 +328,38 @@ onBeforeUnmount(() => window.removeEventListener('yitu-auth-expired', handleAuth
 <template>
   <div v-if="!loggedIn" class="login-page">
     <div class="login-art"><div class="eyebrow">YITU LOGISTICS / 2026</div><h1>把每一次<br><em>寄托</em>送到。</h1><p>从下单、交接到签收，一处掌握完整轨迹。</p><div class="route-line"><span>广州</span><ArrowRight /><span>上海</span></div></div>
-    <el-card class="login-card" shadow="never"><div class="brand-mark">Y</div><h2>欢迎回来</h2><p class="muted">选择身份进入对应工作台</p><el-form @submit.prevent="doLogin" @keyup.enter="doLogin"><el-form-item label="登录身份"><el-select v-model="loginForm.login_name" size="large" class="full-input" filterable><el-option v-for="account in loginAccounts" :key="account.login_name" :label="account.label" :value="account.login_name"><div class="login-option"><span>{{ account.label }}</span><small>{{ account.role }}</small></div></el-option></el-select></el-form-item><el-form-item label="密码"><el-input v-model="loginForm.password" type="password" show-password size="large" /></el-form-item><el-button type="primary" size="large" class="full-btn" @click="doLogin">进入工作台 <ArrowRight /></el-button></el-form><div class="login-note">演示环境统一密码：YituDemo2026!</div></el-card>
+    <el-card class="login-card" shadow="never">
+      <div class="brand-mark">Y</div>
+      <h2>欢迎回来</h2>
+      <p class="muted">登录 Yitu 物流工作台</p>
+      <el-tabs v-model="loginMode" class="login-tabs" stretch>
+        <el-tab-pane label="手机号登录" name="login">
+          <el-form @submit.prevent="doLogin" @keyup.enter="doLogin">
+            <el-form-item label="手机号"><el-input v-model="loginPhoneForm.phone" size="large" maxlength="11" placeholder="请输入手机号" /></el-form-item>
+            <el-form-item label="密码"><el-input v-model="loginPhoneForm.password" type="password" show-password size="large" placeholder="请输入密码" /></el-form-item>
+            <el-button type="primary" size="large" class="full-btn" @click="doLogin">登录 <ArrowRight /></el-button>
+          </el-form>
+          <div class="login-note">没有账号？<el-link type="primary" @click="loginMode = 'register'">立即注册</el-link></div>
+        </el-tab-pane>
+        <el-tab-pane label="注册" name="register">
+          <el-form @submit.prevent="doLogin" @keyup.enter="doLogin">
+            <el-form-item label="手机号"><el-input v-model="registerForm.phone" size="large" maxlength="11" placeholder="请输入手机号" /></el-form-item>
+            <el-form-item label="密码"><el-input v-model="registerForm.password" type="password" show-password size="large" placeholder="至少 8 位" /></el-form-item>
+            <el-form-item label="昵称（可选）"><el-input v-model="registerForm.display_name" size="large" placeholder="例如：张三" /></el-form-item>
+            <el-button type="primary" size="large" class="full-btn" @click="doLogin">注册并登录 <ArrowRight /></el-button>
+          </el-form>
+          <div class="login-note">已有账号？<el-link type="primary" @click="loginMode = 'login'">去登录</el-link></div>
+        </el-tab-pane>
+        <el-tab-pane label="演示登录" name="demo">
+          <el-form @submit.prevent="doLogin" @keyup.enter="doLogin">
+            <el-form-item label="登录身份"><el-select v-model="loginForm.login_name" size="large" class="full-input" filterable><el-option v-for="account in loginAccounts" :key="account.login_name" :label="account.label" :value="account.login_name"><div class="login-option"><span>{{ account.label }}</span><small>{{ account.role }}</small></div></el-option></el-select></el-form-item>
+            <el-form-item label="密码"><el-input v-model="loginForm.password" type="password" show-password size="large" /></el-form-item>
+            <el-button type="primary" size="large" class="full-btn" @click="doLogin">进入工作台 <ArrowRight /></el-button>
+          </el-form>
+          <div class="login-note">演示环境统一密码：YituDemo2026!</div>
+        </el-tab-pane>
+      </el-tabs>
+    </el-card>
   </div>
   <CourierWorkspace v-else-if="user?.role === 'COURIER'" :user="user" @logout="logout" />
   <StationOperatorWorkspace v-else-if="user?.role === 'STATION_OPERATOR'" :user="user" @logout="logout" />

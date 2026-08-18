@@ -7,7 +7,7 @@ http.interceptors.request.use((config) => {
   return config
 })
 http.interceptors.response.use((response) => response, (error) => {
-  if (error.response?.status === 401 && !error.config?.url?.includes('/auth/demo-login')) {
+  if (error.response?.status === 401 && !['/auth/demo-login', '/auth/login', '/auth/register'].some(p => error.config?.url?.includes(p))) {
     localStorage.removeItem('yitu_token')
     window.dispatchEvent(new Event('yitu-auth-expired'))
   }
@@ -41,8 +41,18 @@ export type DeadLetter = { id: string; event_id: string; event_type: string; bus
 export type KnowledgeDocument = { id: string; filename: string; content_type: string; size_bytes: number; sha256: string; status: string; page_count?: number; error_message?: string; mineru_task_id?: string; created_at: string; updated_at: string; category?: string; published_at?: string }
 
 // ---- 认证 ----
-export async function login(login_name: string, password: string) {
+export async function demoLogin(login_name: string, password: string) {
   const { data } = await http.post('/auth/demo-login', { login_name, password })
+  localStorage.setItem('yitu_token', data.access_token)
+  return data
+}
+export async function login(phone: string, password: string) {
+  const { data } = await http.post('/auth/login', { phone, password })
+  localStorage.setItem('yitu_token', data.access_token)
+  return data
+}
+export async function register(phone: string, password: string, display_name?: string) {
+  const { data } = await http.post('/auth/register', { phone, password, display_name })
   localStorage.setItem('yitu_token', data.access_token)
   return data
 }

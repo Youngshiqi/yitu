@@ -1,3 +1,4 @@
+import re
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
@@ -58,3 +59,22 @@ def decode_access_token(token: str) -> dict[str, object]:
     except jwt.PyJWTError as error:
         raise ValueError("令牌无效或已过期") from error
     return claims
+
+
+_PHONE_NON_DIGIT = re.compile(r"\D+")
+
+
+def normalize_phone(value: str) -> str:
+    """手机号归一化为纯数字串，消除空格、连字符、国家码等格式差异。"""
+    digits = _PHONE_NON_DIGIT.sub("", value or "")
+    if len(digits) == 13 and digits.startswith("86"):
+        digits = digits[2:]
+    elif digits.startswith("0086"):
+        digits = digits[4:]
+    return digits
+
+
+def is_valid_phone(value: str) -> bool:
+    """校验大陆手机号：归一化后为 11 位且以 1 开头。"""
+    digits = normalize_phone(value)
+    return len(digits) == 11 and digits.startswith("1")

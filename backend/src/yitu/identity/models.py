@@ -53,5 +53,6 @@ class User(Base):
         ForeignKey("stations.id", ondelete="RESTRICT"), nullable=True
     )
     demo_key: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True)
+    phone: Mapped[str | None] = mapped_column(String(32), unique=True, nullable=True)
 
     station: Mapped[Station | None] = relationship(back_populates="users")
