@@ -84,6 +84,8 @@ _TRADITIONAL_TO_SIMPLIFIED = str.maketrans(
     }
 )
 _WHITESPACE = re.compile(r"\s+")
+# 判定消息里是否存在「可理解文字」，用于短路无内容的输入（空串/纯标点/纯 emoji）。
+_HAS_WORD = re.compile(r"[A-Za-z0-9\u4e00-\u9fff]")
 
 
 def preprocess_text(value: str) -> PreprocessedText:
@@ -303,6 +305,17 @@ class UnderstandingService:
     ) -> UnderstandingResult:
         """返回统一的 `{intent, slots, confidence}` 结构供下游执行。"""
         preprocessed = preprocess_text(user_message)
+        # 空串、纯空格、纯标点或纯 emoji 都不含可理解文字，正则必然全不命中；
+        # 提前短路避免白白调用一次大模型去理解无信息内容。
+        if not _HAS_WORD.search(preprocessed.normalized):
+            return UnderstandingResult(
+                intents=["GENERAL_CHAT"],
+                primary_intent="GENERAL_CHAT",
+                confidence=0.0,
+                draft=DraftCandidate(),
+                clarification_question="我没有听清，可以再说一遍吗？",
+                recognition_path="RULE",
+            )
         rule_result = fast_path(preprocessed, address_labels)
         if rule_result is not None:
             return rule_result
