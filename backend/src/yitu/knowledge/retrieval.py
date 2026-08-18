@@ -12,8 +12,10 @@ from yitu.knowledge.embedding import EmbeddingProvider, get_embedding_provider
 from yitu.knowledge.models import DocumentStatus, KnowledgeChunk, KnowledgeDocument
 from yitu.knowledge.tokenization import expand_query_tokens, tokenize_for_query
 
-KEYWORD_WEIGHT = 0.55
-VECTOR_WEIGHT = 0.45
+# 语义向量（qwen）比中文 OR 关键词检索更可靠、噪声更低，故向量权重略高；
+# 关键词命中仅作为辅助信号，避免「只沾边某个高频字」的弱相关 chunk 挤占排序。
+KEYWORD_WEIGHT = 0.45
+VECTOR_WEIGHT = 0.55
 MAX_CANDIDATES = 160
 # 配置精排器后，先取较大的融合候选池交给精排，再截断到 limit。
 RERANK_POOL_SIZE = 30

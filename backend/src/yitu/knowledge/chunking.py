@@ -6,6 +6,9 @@ PAGE_MARKER_RE = re.compile(
     re.IGNORECASE,
 )
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*#*\s*$")
+# 法规「第X条」条号行（X 为阿拉伯或中文数字，可带尾随标点），用于识别
+# 被空行从正文剥离的孤立条头，避免其单独成块、检索只命中条号而无正文。
+CLAUSE_ONLY_RE = re.compile(r"第[0-9〇一二三四五六七八九十百零两]+条[、。：:，,\s]*")
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,6 +83,11 @@ class ChunkingPolicy:
                     flush()
                 block_type = "table"
             elif not line.strip():
+                # 法规条号行（如「第四条」）后紧跟的空行不切分，让条头与后续
+                # 正文合并到同一个块，避免产生「只有条号、没有内容」的碎片 chunk。
+                if len(pending) == 1 and CLAUSE_ONLY_RE.fullmatch(pending[0].lstrip()):
+                    index += 1
+                    continue
                 flush()
                 index += 1
                 continue
