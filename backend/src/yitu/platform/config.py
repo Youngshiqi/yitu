@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     app_profile: str = "development"
     business_timezone: Literal["Asia/Shanghai"] = "Asia/Shanghai"
     database_url: str = (
-        "postgresql+asyncpg://yitu:yitu_test@127.0.0.1:55432/yitu_test"
+        "postgresql+asyncpg://yitu:请替换密码@127.0.0.1:55433/yitu"
     )
     redis_url: str = "redis://127.0.0.1:6379/0"
     jwt_secret: str = "仅供本地开发的默认密钥，请在生产环境替换"
