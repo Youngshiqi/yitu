@@ -10,12 +10,16 @@ os.environ.setdefault(
 )
 
 from yitu.main import create_app
+from yitu.platform.config import get_settings
 from yitu.platform.database import dispose_database
+from yitu.platform.test_cleanup import clean_test_database
 
 
 @pytest.fixture(scope="session", autouse=True)
 async def database_lifecycle() -> AsyncIterator[None]:
     yield
+    # 测试结束后清理业务脏数据，避免污染共享开发库（docker db）
+    await clean_test_database(get_settings().database_url)
     await dispose_database()
 
 

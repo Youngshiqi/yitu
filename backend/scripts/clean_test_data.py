@@ -20,56 +20,13 @@ import argparse
 import asyncio
 
 from sqlalchemy import text
+
 from yitu.platform.database import SessionFactory, dispose_database
-
-# 保留的配置/参考表（不清空）
-KEEP_TABLES: frozenset[str] = frozenset({
-    "administrative_regions",
-    "alembic_version",
-    "checkpoint_migrations",  # langgraph schema 版本追踪
-    "knowledge_documents",   # FK RESTRICT → users，必须保护
-    "knowledge_chunks",      # FK CASCADE → knowledge_documents
-    "pricing_rules",
-    "service_areas",
-    "sla_rules",
-    "stations",
-})
-
-# 清空的流水/运行态表（不含 users，users 用精准 DELETE）
-TRUNCATE_TABLES: tuple[str, ...] = (
-    "addresses",
-    "agent_action_grants",
-    "agent_conversations",
-    "agent_memories",
-    "agent_messages",
-    "agent_shipment_drafts",
-    "audit_entries",
-    "checkpoint_blobs",
-    "checkpoint_writes",
-    "checkpoints",
-    "courier_tasks",
-    "dead_letters",
-    "exception_cases",
-    "exception_task_reassignments",
-    "idempotency_records",
-    "notification_deliveries",
-    "notification_messages",
-    "outbox_events",
-    "payment_transactions",
-    "pickup_credentials",
-    "proofs_of_delivery",
-    "quote_snapshots",
-    "recovery_cases",
-    "shipment_holds",
-    "shipment_packages",
-    "shipments",
-    "sla_instances",
-    "sla_pauses",
-    "tracking_events",
-    "transport_legs",
+from yitu.platform.test_cleanup import (
+    KEEP_TABLES,
+    TRUNCATE_TABLES,
+    clean_business_data,
 )
-
-_DELETE_TEST_USERS = "DELETE FROM users WHERE demo_key IS NULL"
 
 
 async def _count(session, table: str) -> int:
@@ -88,7 +45,6 @@ async def clean(dry_run: bool) -> None:
         )).scalar()
         test_user_count = total_users - seed_count
 
-        total_rows = sum(before_counts.values()) + test_user_count
         print("=" * 60)
         print(f"模式: {'DRY-RUN（不修改）' if dry_run else 'APPLY（执行清理）'}")
         print(f"将清空 {len(TRUNCATE_TABLES)} 张流水表（{sum(before_counts.values())} 行）")
@@ -103,35 +59,25 @@ async def clean(dry_run: bool) -> None:
                 if n > 0:
                     print(f"  {t:35s} {n:>6} 行")
             print(f"  {'users (DELETE test)':35s} {test_user_count:>6} 行")
-            print(f"\n种子用户（保留）：")
+            print("\n种子用户（保留）：")
             rows = (await session.execute(text(
                 "SELECT login_name, display_name, role, demo_key "
                 "FROM users WHERE demo_key IS NOT NULL ORDER BY role"
             ))).fetchall()
             for r in rows:
                 print(f"  {r[0]:30s} {r[1]:12s} {r[2]:20s} {r[3]}")
-            print(f"\n保留的配置表：")
+            print("\n保留的配置表：")
             for t in sorted(KEEP_TABLES):
                 n = await _count(session, t)
                 print(f"  {t:35s} {n:>6} 行")
             return
 
         # ---- APPLY ----
-        # 1. TRUNCATE 流水表（不含 users，无 CASCADE 连带风险）
-        table_list = ", ".join(f'"{t}"' for t in TRUNCATE_TABLES)
-        await session.execute(text(
-            f"TRUNCATE TABLE {table_list} RESTART IDENTITY CASCADE"
-        ))
-        print(f"\n[1/3] 已 TRUNCATE {len(TRUNCATE_TABLES)} 张流水表")
-
-        # 2. 精准删除测试用户（不影响 RESTRICT FK 表如 knowledge_documents）
-        result = await session.execute(text(_DELETE_TEST_USERS))
-        deleted = result.rowcount
-        print(f"[2/3] 已 DELETE {deleted} 个测试用户")
-
-        # 3. 提交
-        await session.commit()
-        print("[3/3] 已提交")
+        deleted = await clean_business_data(session)
+        print(
+            f"\n已 TRUNCATE {len(TRUNCATE_TABLES)} 张流水表，"
+            f"DELETE {deleted} 个测试用户，已提交"
+        )
 
         # 验证
         print("\n清理后验证：")
@@ -145,7 +91,7 @@ async def clean(dry_run: bool) -> None:
             if t not in ("alembic_version",):
                 n = await _count(session, t)
                 print(f"  {t:35s} {n:>6} 行（保留）")
-        print(f"\n✅ 清理完成。")
+        print("\n✅ 清理完成。")
 
     await dispose_database()
 
