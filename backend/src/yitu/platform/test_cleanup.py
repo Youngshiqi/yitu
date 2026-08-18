@@ -66,7 +66,7 @@ TRUNCATE_TABLES: tuple[str, ...] = (
     "transport_legs",
 )
 
-_DELETE_TEST_USERS = "DELETE FROM users WHERE demo_key IS NULL"
+_DELETE_TEST_USERS = "DELETE FROM users WHERE demo_key IS NULL AND phone IS NULL"
 
 
 async def clean_business_data(session: AsyncSession) -> int:

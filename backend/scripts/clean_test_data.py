@@ -39,16 +39,17 @@ async def clean(dry_run: bool) -> None:
         before_counts = {}
         for t in TRUNCATE_TABLES:
             before_counts[t] = await _count(session, t)
-        total_users = await _count(session, "users")
         seed_count = (await session.execute(
             text("SELECT COUNT(*) FROM users WHERE demo_key IS NOT NULL")
         )).scalar()
-        test_user_count = total_users - seed_count
+        test_user_count = (await session.execute(
+            text("SELECT COUNT(*) FROM users WHERE demo_key IS NULL AND phone IS NULL")
+        )).scalar()
 
         print("=" * 60)
         print(f"模式: {'DRY-RUN（不修改）' if dry_run else 'APPLY（执行清理）'}")
         print(f"将清空 {len(TRUNCATE_TABLES)} 张流水表（{sum(before_counts.values())} 行）")
-        print(f"  + DELETE {test_user_count} 个测试用户（demo_key IS NULL）")
+        print(f"  + DELETE {test_user_count} 个测试用户（demo_key IS NULL AND phone IS NULL）")
         print(f"  保留 {seed_count} 个种子用户 + {len(KEEP_TABLES)} 张配置/参考表")
         print("=" * 60)
 
