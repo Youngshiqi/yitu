@@ -52,7 +52,7 @@ class TextChunk:
 class ChunkingPolicy:
     """按 Markdown 结构优先切片，长段落再按字符上限重叠切分。"""
 
-    version = "markdown-v3"
+    version = "markdown-v4"
 
     def __init__(self, max_chars: int = 800, overlap: int = 100) -> None:
         if max_chars <= 0 or overlap < 0 or overlap >= max_chars:
@@ -137,7 +137,10 @@ class ChunkingPolicy:
                 #        - 否则（顶层目录式列举，比如纯「禁止寄递物品指导目录」下的
                 #          「一、/二、」并列大节），flush 开启新大节 block，避免跨节
                 #          子项错合并。
-                #   b) 其他情况：新行既不是列举项、也不是条款条号延续 → flush。
+                #   b) pending 末尾是子级列举（1. / (一) / (1) 等），且新行是另一个
+                #      并列大节（cn-parent）或新条款（第X条）才 flush 切断；
+                #      若新行只是普通补充正文（如「（补充正文）...」），视为当前大节/条款
+                #      的延续，不 flush，避免子列举后的补充描述被错误切开。
                 #   c) 新「第X条」条头本身不含引导语 → 结束当前列举 block。
                 if self._pending_tail_is_enumeration(pending) or (
                     pending and CLAUSE_INTRO_RE.match(pending[-1].strip())
@@ -151,10 +154,7 @@ class ChunkingPolicy:
                         and not in_clause_block
                     ):
                         flush()
-                    elif (
-                        not ENUMERATION_ITEM_RE.match(line)
-                        and not CLAUSE_HEAD_RE.match(line)
-                    ):
+                    elif tail_kind == "sub" and CLAUSE_HEAD_RE.match(line) and not CLAUSE_INTRO_RE.match(line.strip()):
                         flush()
                     elif CLAUSE_HEAD_RE.match(line) and not CLAUSE_INTRO_RE.match(line.strip()):
                         flush()
