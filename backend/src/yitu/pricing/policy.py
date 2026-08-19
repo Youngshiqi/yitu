@@ -50,9 +50,9 @@ class QuoteCalculation:
 
 
 DEFAULT_RULES = {
-    "SAME_CITY": PricingRuleData("pricing-demo-v1", "SAME_CITY", 800, 200),
-    "BJ_SH": PricingRuleData("pricing-demo-v1", "BJ_SH", 1500, 600),
-    "CROSS_REGION": PricingRuleData("pricing-demo-v1", "CROSS_REGION", 1200, 500),
+    "SAME_CITY": PricingRuleData("pricing-demo-v1", "SAME_CITY", 800, 150),
+    "BJ_SH": PricingRuleData("pricing-demo-v1", "BJ_SH", 1500, 500),
+    "CROSS_REGION": PricingRuleData("pricing-demo-v1", "CROSS_REGION", 1800, 700),
 }
 
 

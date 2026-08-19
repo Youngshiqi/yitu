@@ -1,13 +1,13 @@
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yitu.identity.models import Role, Station, User
 from yitu.identity.security import hash_password
 from yitu.platform.clock import Clock
 from yitu.pricing.models import PricingRule
-from yitu.sla.models import SLARule
+from yitu.sla.models import SLAInstance, SLARule
 from yitu.stations.models import ServiceArea
 
 DEMO_PASSWORD = "YituDemo2026!"
@@ -38,37 +38,46 @@ async def seed_demo_users(session: AsyncSession) -> list[User]:
 
 
 async def seed_demo_pricing(session: AsyncSession) -> None:
-    """演示环境补齐基础报价规则，不覆盖管理员维护的已有规则。"""
-    defaults = (
-        ("40000000-0000-4000-8000-000000000001", "SAME_CITY", 800, 200),
-        ("40000000-0000-4000-8000-000000000002", "BJ_SH", 1500, 600),
-        ("40000000-0000-4000-8000-000000000003", "CROSS_REGION", 1200, 500),
+    """演示环境重置为基础报价规则：历史规则标记失效，写入三条贴合现实的线路。"""
+    now = Clock.now()
+    # 运费规则被历史报价/支付/运单外键引用（RESTRICT），标记失效而非物理删除。
+    await session.execute(
+        update(PricingRule)
+        .where(PricingRule.version != "pricing-demo-v1")
+        .values(effective_to=now)
     )
-    existing = {
-        rule.route_code
-        for rule in (await session.scalars(select(PricingRule))).all()
-    }
-    session.add_all(
-        [
-            PricingRule(
-                id=UUID(rule_id),
-                version="pricing-demo-v1",
-                route_code=route,
-                base_fee_cents=base_fee,
-                additional_fee_cents=additional_fee,
-                remote_surcharge_cents=0,
-                effective_from=Clock.now(),
+    # 首重 1kg，续重每 500g 一档，金额为整数分，贴合现实快递区间。
+    targets = (
+        ("40000000-0000-4000-8000-000000000001", "SAME_CITY", 800, 150),
+        ("40000000-0000-4000-8000-000000000002", "BJ_SH", 1500, 500),
+        ("40000000-0000-4000-8000-000000000003", "CROSS_REGION", 1800, 700),
+    )
+    for rule_id, route, base_fee, additional_fee in targets:
+        rule = await session.get(PricingRule, UUID(rule_id))
+        if rule is None:
+            session.add(
+                PricingRule(
+                    id=UUID(rule_id),
+                    version="pricing-demo-v1",
+                    route_code=route,
+                    base_fee_cents=base_fee,
+                    additional_fee_cents=additional_fee,
+                    remote_surcharge_cents=0,
+                    effective_from=now,
+                )
             )
-            for rule_id, route, base_fee, additional_fee in defaults
-            if route not in existing
-        ]
-    )
+        else:
+            rule.base_fee_cents = base_fee
+            rule.additional_fee_cents = additional_fee
+            rule.remote_surcharge_cents = 0
+            rule.effective_from = now
+            rule.effective_to = None
     await session.flush()
 
 
 async def seed_demo_service_areas(session: AsyncSession) -> None:
     """为演示网点补齐门到门服务区域，不覆盖运营员已经维护的映射。"""
-    demo_codes = {"BJS-001", "SHS-001", "GZS-001", "SZS-001"}
+    demo_codes = {"BJS-001", "SHS-001"}
     stations = (
         await session.scalars(select(Station).where(Station.code.in_(demo_codes)))
     ).all()
@@ -94,6 +103,14 @@ async def seed_demo_service_areas(session: AsyncSession) -> None:
 
 async def seed_demo_sla_rules(session: AsyncSession) -> None:
     """Provide conservative default stage targets for the demo environment."""
+    # 只保留演示版本规则，清理运营测试残留的其他版本。
+    stray_rule_ids = (
+        await session.scalars(select(SLARule.id).where(SLARule.version != "sla-demo-v1"))
+    ).all()
+    if stray_rule_ids:
+        await session.execute(delete(SLAInstance).where(SLAInstance.rule_id.in_(stray_rule_ids)))
+        await session.execute(delete(SLARule).where(SLARule.id.in_(stray_rule_ids)))
+
     stages = (("PICKUP", 9), ("LINEHAUL", 18), ("DELIVERY", 18))
     existing = {
         rule.stage

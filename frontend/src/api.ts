@@ -191,7 +191,7 @@ export async function advanceReturn(id: string) { return (await http.post(`/retu
 
 // ---- SLA ----
 export async function listSlaInstances(shipmentId: string) { return (await http.get(`/sla/shipments/${shipmentId}/instances`)).data }
-export async function listSlaRules() { return (await http.get('/sla/rules')).data as SLARule[] }
+export async function listSlaRules(params?: Record<string, unknown>) { return (await http.get('/sla/rules', { params })).data as { items: SLARule[]; total: number } }
 export async function createSlaRule(payload: Omit<SLARule, 'id'>) { return (await http.post('/sla/rules', payload)).data as SLARule }
 
 // ---- 运费规则 ----

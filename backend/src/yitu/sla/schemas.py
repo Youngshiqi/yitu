@@ -62,6 +62,13 @@ class SLARuleView(BaseModel):
     active: bool
 
 
+class SLARuleListResponse(BaseModel):
+    """SLA 规则分页响应。"""
+
+    items: list[SLARuleView]
+    total: int
+
+
 class SLAInstanceView(BaseModel):
     """SLA 实例公开视图。"""
 

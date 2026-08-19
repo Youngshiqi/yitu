@@ -1,10 +1,11 @@
 """SLA HTTP 接口。"""
 
 from datetime import timedelta
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, Query, status
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yitu.identity.models import Role
@@ -23,6 +24,7 @@ from yitu.sla.schemas import (
     SLAInstanceView,
     SLAPauseRequest,
     SLARuleCreate,
+    SLARuleListResponse,
     SLARuleView,
 )
 from yitu.sla.service import SLAService
@@ -51,18 +53,25 @@ async def create_rule(payload: SLARuleCreate, user: CurrentUser = _operators, se
     return rule
 
 
-@router.get("/rules", response_model=list[SLARuleView])
+@router.get("/rules", response_model=SLARuleListResponse)
 async def list_rules(
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    offset: Annotated[int, Query(ge=0)] = 0,
     _user: CurrentUser = _operators,
     session: AsyncSession = _session,
-) -> list[SLARule]:
-    return list(
+) -> SLARuleListResponse:
+    total = (await session.scalar(select(func.count()).select_from(SLARule))) or 0
+    items = list(
         (
             await session.scalars(
-                select(SLARule).order_by(SLARule.effective_from.desc())
+                select(SLARule)
+                .order_by(SLARule.effective_from.desc())
+                .limit(limit)
+                .offset(offset)
             )
         ).all()
     )
+    return SLARuleListResponse(items=items, total=total)
 
 
 @router.post("/shipments/{shipment_id}/instances", response_model=SLAInstanceView, status_code=status.HTTP_201_CREATED)
