@@ -71,7 +71,7 @@ def classify_intent_node(state: AgentState) -> AgentState:
 
 
 def knowledge_node(state: AgentState) -> AgentState:
-    """为任务三的 RAG 工具产出受控动作，不伪造知识证据。"""
+    """为 RAG 工具产出受控动作，不伪造知识证据。"""
     refusal = _tool_budget_refusal(state)
     if refusal is not None:
         return _blocked_update(refusal)

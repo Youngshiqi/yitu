@@ -24,7 +24,7 @@ Compose 会以演示模式启动并自动创建以下固定身份，统一密码
 - 北京网点员：`operator.beijing.demo`
 - 上海网点员：`operator.shanghai.demo`
 - 运营管理员：`operations.demo`
-- 系统管理员：`system.demo`
+
 
 网点自取的演示取件码固定为 `123456`，仅用于本地 demo 配置。正式环境必须关闭 demo 配置，并配置独立的取件码 pepper；接口和轨迹均不会返回取件码明文。
 
