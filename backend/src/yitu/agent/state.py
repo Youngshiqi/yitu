@@ -57,7 +57,6 @@ class AgentState(TypedDict, total=False):
     refusal_reason: str | None  # 拒绝原因，如安全拦截/预算超限时
     
     # 执行预算，防止AI无限循环
-    context_loaded: bool  # 是否已加载上下文，避免重复加载，由load_context节点设置
     turn_count: int       # 当前已跑轮次
     tool_call_count: int  # 已调工具次数
     max_turns: int        # 最大轮次上限默认为8，超过后会拒绝

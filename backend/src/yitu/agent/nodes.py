@@ -33,14 +33,17 @@ def security_refusal(message: str) -> tuple[AgentIntent, str] | None:
     if any(pattern.search(message) for pattern in CROSS_USER_PATTERNS):
         return "SHIPMENT_QUERY", CROSS_USER_REFUSAL
     return None
-    
-def load_context_node(state: AgentState) -> AgentState:
-    """校验执行预算并标记身份、历史和工作上下文已加载。"""
+
+def check_budget_node(state: AgentState) -> AgentState:
+    """图的入口节点：校验执行预算（超时/轮次/工具调用），通过则推进 turn_count。
+
+    身份、历史等上下文由 service.py 在图外准备好塞进 state，本节点不加载
+    任何业务上下文，只做预算守门 + 轮次计数，供后续节点的预算校验读取。
+    """
     refusal = _budget_refusal(state)
     if refusal is not None:
         return _blocked_update(refusal)
     return {
-        "context_loaded": True,
         "turn_count": state.get("turn_count", 0) + 1,
         "tool_call_count": state.get("tool_call_count", 0),
     }
