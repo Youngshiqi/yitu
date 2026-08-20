@@ -33,6 +33,7 @@ def security_refusal(message: str) -> tuple[AgentIntent, str] | None:
     if any(pattern.search(message) for pattern in CROSS_USER_PATTERNS):
         return "SHIPMENT_QUERY", CROSS_USER_REFUSAL
     return None
+    
 def load_context_node(state: AgentState) -> AgentState:
     """校验执行预算并标记身份、历史和工作上下文已加载。"""
     refusal = _budget_refusal(state)
