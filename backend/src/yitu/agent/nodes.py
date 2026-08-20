@@ -34,25 +34,18 @@ def security_refusal(message: str) -> tuple[AgentIntent, str] | None:
         return "SHIPMENT_QUERY", CROSS_USER_REFUSAL
     return None
 
-def check_budget_node(state: AgentState) -> AgentState:
-    """图的入口节点：校验执行预算（超时/轮次/工具调用），通过则推进 turn_count。
+def classify_intent_node(state: AgentState) -> AgentState:
+    """图的入口：先做超时守门，再执行安全拦截，最后把语义结果映射为有限路由。
 
     身份、历史等上下文由 service.py 在图外准备好塞进 state，本节点不加载
-    任何业务上下文，只做预算守门 + 轮次计数，供后续节点的预算校验读取。
+    任何业务上下文。主图是线性路由，只查超时防卡死；轮次/工具调用预算
+    留给草稿子图的 _budget_refusal 防止 agentic loop 失控。
     """
-    refusal = _budget_refusal(state)
-    if refusal is not None:
-        return _blocked_update(refusal)
-    return {
-        "turn_count": state.get("turn_count", 0) + 1,
-        "tool_call_count": state.get("tool_call_count", 0),
-    }
-
-
-def classify_intent_node(state: AgentState) -> AgentState:
-    """先执行确定性安全拦截，再把已校验的语义结果映射为有限路由。"""
     if state.get("route") == "blocked":
         return {}
+    timeout_refusal = _timeout_refusal(state)
+    if timeout_refusal is not None:
+        return _blocked_update(timeout_refusal)
     message = state.get("user_message", "").strip()
     refusal = security_refusal(message)
     if refusal is not None:
@@ -76,7 +69,7 @@ def classify_intent_node(state: AgentState) -> AgentState:
 
 def knowledge_node(state: AgentState) -> AgentState:
     """为 RAG 工具产出受控动作，不伪造知识证据。"""
-    refusal = _tool_budget_refusal(state)
+    refusal = _timeout_refusal(state)
     if refusal is not None:
         return _blocked_update(refusal)
     return {
@@ -88,7 +81,7 @@ def knowledge_node(state: AgentState) -> AgentState:
 
 def pricing_rule_node(state: AgentState) -> AgentState:
     """为运费规则查询工具产出动作，金额以确定性业务服务为准。"""
-    refusal = _tool_budget_refusal(state)
+    refusal = _timeout_refusal(state)
     if refusal is not None:
         return _blocked_update(refusal)
     return {
@@ -100,7 +93,7 @@ def pricing_rule_node(state: AgentState) -> AgentState:
 
 def read_tool_node(state: AgentState) -> AgentState:
     """为任务三的本人业务查询工具产出动作，身份范围来自后端状态。"""
-    refusal = _tool_budget_refusal(state)
+    refusal = _timeout_refusal(state)
     if refusal is not None:
         return _blocked_update(refusal)
     return {
@@ -112,7 +105,7 @@ def read_tool_node(state: AgentState) -> AgentState:
 
 def address_tool_node(state: AgentState) -> AgentState:
     """为本人地址簿查询工具产出动作，身份范围来自后端状态。"""
-    refusal = _tool_budget_refusal(state)
+    refusal = _timeout_refusal(state)
     if refusal is not None:
         return _blocked_update(refusal)
     return {
@@ -124,7 +117,7 @@ def address_tool_node(state: AgentState) -> AgentState:
 
 def identity_tool_node(state: AgentState) -> AgentState:
     """为本人身份查询工具产出动作，身份范围来自后端状态。"""
-    refusal = _tool_budget_refusal(state)
+    refusal = _timeout_refusal(state)
     if refusal is not None:
         return _blocked_update(refusal)
     return {
@@ -136,7 +129,7 @@ def identity_tool_node(state: AgentState) -> AgentState:
 
 def draft_node(state: AgentState) -> AgentState:
     """把自然语言草稿变更送往后续确定性草稿服务。"""
-    refusal = _tool_budget_refusal(state)
+    refusal = _timeout_refusal(state)
     if refusal is not None:
         return _blocked_update(refusal)
     return {
@@ -214,9 +207,17 @@ def _budget_refusal(state: AgentState) -> str | None:
     return None
 
 
-def _tool_budget_refusal(state: AgentState) -> str | None:
-    """工具节点预算：与通用预算一致，工具调用次数超限同样拒绝。"""
-    return _budget_refusal(state)
+def _timeout_refusal(state: AgentState) -> str | None:
+    """主图专用：主图是线性路由，只防卡死，不查轮次/工具调用。
+
+    主图单次线性执行、节点本身不调工具，turn_count/tool_call_count 永远不会
+    超限；草稿子图才需要完整的 _budget_refusal 防止 agentic loop 失控。
+    """
+    started_at = state.get("execution_started_at", monotonic())
+    timeout = state.get("timeout_seconds", 30.0)
+    if timeout <= 0 or monotonic() - started_at > timeout:
+        return TIMEOUT_REFUSAL
+    return None
 
 
 def _blocked_update(reason: str) -> AgentState:

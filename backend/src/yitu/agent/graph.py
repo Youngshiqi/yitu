@@ -6,7 +6,6 @@ from langgraph.graph.state import CompiledStateGraph
 from yitu.agent.nodes import (
     address_tool_node,
     blocked_node,
-    check_budget_node,
     classify_intent_node,
     confirmation_node,
     draft_node,
@@ -23,7 +22,6 @@ from yitu.agent.state import AgentState
 def build_agent_graph() -> CompiledStateGraph[AgentState, None, AgentState, AgentState]:
     """构建只负责路由的图，业务工具和写操作由后续任务注入。"""
     graph = StateGraph(AgentState)
-    graph.add_node("check_budget", check_budget_node)
     graph.add_node("classify_intent", classify_intent_node)
     graph.add_node("knowledge", knowledge_node)
     graph.add_node("pricing_rule", pricing_rule_node)
@@ -35,8 +33,7 @@ def build_agent_graph() -> CompiledStateGraph[AgentState, None, AgentState, Agen
     graph.add_node("respond", response_node)
     graph.add_node("blocked", blocked_node)
 
-    graph.add_edge(START, "check_budget")
-    graph.add_edge("check_budget", "classify_intent")
+    graph.add_edge(START, "classify_intent")
     graph.add_conditional_edges(
         "classify_intent",
         route_after_classification,
