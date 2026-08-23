@@ -365,6 +365,11 @@ class AgentConversationService:
             # 草稿填写：跳进 draft agentic loop，模型边调 update_draft 工具
             # 边追问；loop 完成后字段齐全就自动报价并提示确认。
             elif route == "draft":
+                # 理解层已结构化提取草稿字段，先确定性落库，避免 draft loop 二次
+                # 转述用户原话时把重量/尺寸等字段填错；draft loop 只补漏剩余字段。
+                await self._update_draft_from_understanding(
+                    conversation.id, actor, understanding, addresses
+                )
                 draft_holder: dict[str, object] = {}
                 async for chunk in self._stream_draft_with_quote(
                     conversation.id,
@@ -395,6 +400,9 @@ class AgentConversationService:
                     draft.status != "READY_FOR_CONFIRMATION"
                     and _has_draft_fields(understanding.draft)
                 ):
+                    await self._update_draft_from_understanding(
+                        conversation.id, actor, understanding, addresses
+                    )
                     draft_holder: dict[str, object] = {}
                     async for chunk in self._stream_draft_with_quote(
                         conversation.id,
