@@ -273,7 +273,9 @@ def _unique_label(value: str, address_labels: list[str]) -> str | None:
 UNDERSTANDING_PROMPT = """你是 Yitu 物流的意图识别器。调用 classify_logistics_intent 函数返回结果，不直接回答用户。
 可选意图只有 GENERAL_CHAT、KNOWLEDGE_QUERY、PRICING_QUERY、SHIPMENT_QUERY、DRAFT_UPDATE、SENSITIVE_ACTION、ADDRESS_QUERY、IDENTITY_QUERY。
 支持口语、同义表达、省略和多意图；primary_intent 表示当前最应该先处理的意图。
-创建运单、确认下单、支付、退款、取消或其他改变业务状态的请求属于 SENSITIVE_ACTION，requires_confirmation 必须为 true。
+仅当用户无前置条件、直接要求执行下单/支付/退款/取消等业务状态变更时，才属于 SENSITIVE_ACTION，requires_confirmation 为 true。
+「没问题的话就下单」「运费合适就下单」这类带前置条件的条件式下单不算 SENSITIVE_ACTION；primary_intent 按用户当下真正要你做的事判定，requires_confirmation 保持 false。
+一句话同时包含寄件信息（地址/重量/尺寸/包裹）和运费/下单诉求时，primary_intent 应为 DRAFT_UPDATE：先填写草稿并报价，报价后由系统引导用户确认是否下单。
 物流规则、禁限寄、包装、赔付、保价和时效政策属于 KNOWLEDGE_QUERY。
 运费计费规则（首重、续重、线路费率、上门取件费等）属于 PRICING_QUERY。
 本人运单状态、轨迹、费用或预计到达属于 SHIPMENT_QUERY。
@@ -291,7 +293,7 @@ UNDERSTANDING_PROMPT = """你是 Yitu 物流的意图识别器。调用 classify
 结果：primary_intent=KNOWLEDGE_QUERY, confidence=0.94, knowledge_query=电脑寄件包装要求
 用户：运费怎么算，首重和续重各多少钱
 结果：primary_intent=PRICING_QUERY, confidence=0.95
-用户：从公司寄到家，2.5公斤，箱子30乘20乘15
+用户：从公司寄到家，2.5公斤，箱子30乘20乘15，帮我看看运费，没问题的话直接下单
 结果：primary_intent=DRAFT_UPDATE, confidence=0.97, draft.sender_address_label=公司, draft.receiver_address_label=家, draft.actual_weight_grams=2500
 用户：我有哪些地址可以寄
 结果：primary_intent=ADDRESS_QUERY, confidence=0.95

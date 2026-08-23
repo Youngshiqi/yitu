@@ -284,12 +284,14 @@ class AgentConversationService:
         try:
             # 知识检索：RAG 查已发布物流规则，找到证据才让模型作答，否则返回固定兜底。
             if route == "knowledge":
+                # 启动 RAG 检索：调 KnowledgeSearchTool 查已发布物流规则
                 tool_result = await KnowledgeSearchTool().execute(
                     KnowledgeSearchInput(
                         query=understanding.knowledge_query or content
                     ),
                     ToolContext(actor=actor, session=self._session),
                 )
+                # 有证据时，把检索结果喂给大模型，流式生成规则解答
                 if (
                     tool_result.found
                     and tool_result.data is not None
@@ -364,7 +366,7 @@ class AgentConversationService:
             # 边追问；loop 完成后字段齐全就自动报价并提示确认。
             elif route == "draft":
                 draft_holder: dict[str, object] = {}
-                async for chunk in self._stream_draft_loop(
+                async for chunk in self._stream_draft_with_quote(
                     conversation.id,
                     actor,
                     content,
@@ -380,24 +382,46 @@ class AgentConversationService:
                 )
                 streamed = True
                 trace.record("draft.loop_completed")
-                quote_reply = await self._auto_quote_if_complete(
-                    conversation.id, actor
-                )
-                if quote_reply:
-                    reply_parts.append(quote_reply)
-                    yield ("delta", {"content": quote_reply})
             # 确认下单：签发并消费一次性授权，在同一事务创建运单；
             # 失败时把错误信息作为回复返回，不让整轮崩。
             elif route == "confirmation":
-                try:
-                    reply_parts.append(
-                        await self._confirm_shipment(
-                            conversation.id, actor, str(trace.trace_id)
-                        )
+                # 草稿尚未报价就绪时，用户多半是「填寄件信息 + 问运费 + 条件式下单」的
+                # 复合请求被误判成了敏感动作。若识别结果确实携带寄件信息槽位，
+                # 降级回 draft loop 填草稿并自动报价，而不是冷回「先告诉我寄件信息」。
+                draft = await DraftService(self._session).get_or_create(
+                    conversation.id, actor
+                )
+                if (
+                    draft.status != "READY_FOR_CONFIRMATION"
+                    and _has_draft_fields(understanding.draft)
+                ):
+                    draft_holder: dict[str, object] = {}
+                    async for chunk in self._stream_draft_with_quote(
+                        conversation.id,
+                        actor,
+                        content,
+                        history_messages,
+                        addresses,
+                        model,
+                        draft_holder,
+                    ):
+                        reply_parts.append(chunk)
+                        yield ("delta", {"content": chunk})
+                    pending_address = cast(
+                        dict[str, object] | None, draft_holder.get("pending_address")
                     )
-                except AppError as error:
-                    reply_parts.append(error.message)
-                trace.record("shipment.confirmation_handled")
+                    streamed = True
+                    trace.record("confirmation.degraded_to_draft")
+                else:
+                    try:
+                        reply_parts.append(
+                            await self._confirm_shipment(
+                                conversation.id, actor, str(trace.trace_id)
+                            )
+                        )
+                    except AppError as error:
+                        reply_parts.append(error.message)
+                    trace.record("shipment.confirmation_handled")
             # 自由回复-追问：图外 LLM 判定置信度低已生成追问，直接用，不再调模型。
             elif route == "respond" and understanding.clarification_question:
                 reply_parts.append(understanding.clarification_question)
@@ -627,6 +651,7 @@ class AgentConversationService:
         通过 asyncio.Queue 在 LangGraph 节点执行期间并发传递 token 增量，
         让用户在 agentic loop 的最终模型调用阶段看到逐字输出。
         """
+        # 加载/创建草稿，获取当前已填字段和缺失字段
         draft = await DraftService(self._session).get_or_create(conversation_id, actor)
         summary = await DraftService(self._session).describe(draft, actor)
         filled_fields = (
@@ -638,7 +663,11 @@ class AgentConversationService:
         checkpointer = self._checkpointer
         if checkpointer is None:
             checkpointer = await get_shared_checkpointer()
+        
+        # 清理上一轮的checkpoint，避免读到残留历史
         await _clear_thread(checkpointer, thread_id)
+        
+        # 构建草稿 loop 的初始 state
         loop_state: AgentState = {
             "conversation_id": str(conversation_id),
             "user_id": str(actor.id),
@@ -660,6 +689,8 @@ class AgentConversationService:
         # queue 协议：模型 token 增量是 str，结束哨兵是 None。
         # 哨兵必须由 _run_graph 的 finally 投递，保证图异常时消费端也能退出。
         queue: asyncio.Queue[str | None] = asyncio.Queue()
+        
+        # 当场构建草稿子图
         graph = build_draft_loop_graph(
             model,
             actor=actor,
@@ -679,6 +710,7 @@ class AgentConversationService:
                 # 即使图抛异常也要投递哨兵，否则外层 while 会永久阻塞。
                 await queue.put(None)
 
+        # 异步运行子图，通过 queue 流式产出 token
         graph_task = asyncio.create_task(_run_graph())
 
         while True:
@@ -689,6 +721,25 @@ class AgentConversationService:
 
         graph_result = await graph_task
         result_holder["pending_address"] = graph_result.get("pending_address")
+
+    async def _stream_draft_with_quote(
+        self,
+        conversation_id: UUID,
+        actor: CurrentUser,
+        content: str,
+        history_messages: list[ModelMessage],
+        addresses: list[Address],
+        model: ModelAdapter,
+        result_holder: dict[str, object],
+    ) -> AsyncIterator[str]:
+        """跑草稿 loop 并在字段齐全后追加自动报价，供 draft 与 confirmation 降级共用。"""
+        async for chunk in self._stream_draft_loop(
+            conversation_id, actor, content, history_messages, addresses, model, result_holder
+        ):
+            yield chunk
+        quote_reply = await self._auto_quote_if_complete(conversation_id, actor)
+        if quote_reply:
+            yield quote_reply
 
     async def _auto_quote_if_complete(
         self, conversation_id: UUID, actor: CurrentUser
@@ -967,6 +1018,11 @@ class AgentConversationService:
     ) -> list[str]:
         """语义召回长期记忆：query 为当前用户消息，嵌入失败回退 recency。"""
         return await MemoryService(self._session).recall(owner_id, query)
+
+
+def _has_draft_fields(draft: DraftCandidate) -> bool:
+    """识别结果是否携带任何草稿槽位，用于 confirmation 降级判断。"""
+    return bool(draft.model_dump(exclude_none=True))
 
 
 def _extract_shipment_no(content: str) -> str | None:
