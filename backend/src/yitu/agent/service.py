@@ -16,6 +16,7 @@
 import asyncio
 import inspect
 from collections.abc import AsyncIterator
+from datetime import timedelta
 from time import monotonic
 from typing import Any, cast
 from uuid import UUID
@@ -810,7 +811,9 @@ class AgentConversationService:
 
         前端「确认下单」按钮走独立的 issue/consume 授权接口，不经过对话流，
         下单成功不会产生 assistant 消息；这里补写一条回执，让用户回到聊天
-        记录也能看到下单结果，而不是只剩报价气泡。
+        记录也能看到下单结果，而不是只剩报价气泡。同时补写一条用户「确认」
+        消息，模拟用户在按钮确认时已经打出确认词，使按钮路径与对话确认路径
+        的历史记录保持一致。
         """
         grant = await self._session.get(AgentActionGrant, grant_id)
         # 归属校验：授权必须属于当前用户，防止跨用户写入回执消息。
@@ -823,13 +826,23 @@ class AgentConversationService:
             f"太好啦，运单已经创建好咯！运单号 {shipment.shipment_no}，"
             f"待支付 {quote.total_cents / 100:.2f} 元，前往运单详情完成支付就可以啦。"
         )
+        now = Clock.now()
+        self._session.add(
+            AgentMessage(
+                conversation_id=grant.conversation_id,
+                role="user",
+                content="确认",
+                envelope=None,
+                created_at=now,
+            )
+        )
         self._session.add(
             AgentMessage(
                 conversation_id=grant.conversation_id,
                 role="assistant",
                 content=reply,
                 envelope={"action": "SHIPMENT_CREATED", "grant_id": str(grant_id)},
-                created_at=Clock.now(),
+                created_at=now + timedelta(milliseconds=1),
             )
         )
 
