@@ -38,7 +38,12 @@ from yitu.agent.grants import GrantService
 from yitu.agent.graph import build_agent_graph
 from yitu.agent.memory import MemoryService
 from yitu.agent.model_adapter import ModelAdapter, ModelMessage, ModelUnavailableError
-from yitu.agent.models import AgentConversation, AgentMessage, AgentShipmentDraft
+from yitu.agent.models import (
+    AgentActionGrant,
+    AgentConversation,
+    AgentMessage,
+    AgentShipmentDraft,
+)
 from yitu.agent.nodes import security_refusal
 from yitu.agent.privacy import redact_text
 from yitu.agent.prompts import (
@@ -72,6 +77,7 @@ from yitu.platform.audit import AuditService
 from yitu.platform.clock import Clock
 from yitu.platform.errors import AppError
 from yitu.pricing.models import QuoteSnapshot
+from yitu.shipments.service import ShipmentView
 
 
 async def _clear_thread(checkpointer: Any, thread_id: str) -> None:
@@ -793,6 +799,39 @@ class AgentConversationService:
         if pending_save:
             reply += "对了，这次寄件用了一个新地址，要不要帮你也存进地址簿？以后寄件直接选就行，回复「保存」就可以啦。"
         return reply
+
+    async def record_consumption_receipt(
+        self,
+        grant_id: UUID,
+        actor: CurrentUser,
+        shipment: ShipmentView,
+    ) -> None:
+        """确认下单成功后，把下单回执作为助手消息写入会话历史。
+
+        前端「确认下单」按钮走独立的 issue/consume 授权接口，不经过对话流，
+        下单成功不会产生 assistant 消息；这里补写一条回执，让用户回到聊天
+        记录也能看到下单结果，而不是只剩报价气泡。
+        """
+        grant = await self._session.get(AgentActionGrant, grant_id)
+        # 归属校验：授权必须属于当前用户，防止跨用户写入回执消息。
+        if grant is None or grant.owner_id != actor.id:
+            return
+        quote = await self._session.get(QuoteSnapshot, grant.quote_id)
+        if quote is None:
+            return
+        reply = (
+            f"太好啦，运单已经创建好咯！运单号 {shipment.shipment_no}，"
+            f"待支付 {quote.total_cents / 100:.2f} 元，前往运单详情完成支付就可以啦。"
+        )
+        self._session.add(
+            AgentMessage(
+                conversation_id=grant.conversation_id,
+                role="assistant",
+                content=reply,
+                envelope={"action": "SHIPMENT_CREATED", "grant_id": str(grant_id)},
+                created_at=Clock.now(),
+            )
+        )
 
     async def _ephemeral_address_ids(self, draft: AgentShipmentDraft) -> list[str]:
         """收集草稿里不在地址簿的临时地址 id，供寄件后询问是否保存。"""

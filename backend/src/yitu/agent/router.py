@@ -87,8 +87,9 @@ async def delete_memory(memory_id: UUID, user: CurrentUser = _current_user, sess
 
 @router.post("/grants/{grant_id}/consume", response_model=ShipmentView, status_code=201)
 async def consume_grant(grant_id: UUID, request: Request, user: CurrentUser = _current_user, session: AsyncSession = _session) -> ShipmentView:
-    """原子消费授权并调用共享运单创建服务。"""
+    """原子消费授权并调用共享运单创建服务，成功后落库下单回执消息。"""
     result = await AgentWriteService(session).create_shipment(grant_id, user, request.state.request_id)
+    await AgentConversationService(session).record_consumption_receipt(grant_id, user, result)
     await session.commit()
     return result
 
