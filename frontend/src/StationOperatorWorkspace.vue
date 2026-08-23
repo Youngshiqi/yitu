@@ -255,8 +255,6 @@ onMounted(loadData)
         <button v-for="item in nav" :key="item.id" :class="{ active: view === item.id }" @click="view = item.id">
           <component :is="item.icon" />
           <span>{{ item.label }}</span>
-          <b v-if="item.id === 'tasks' && tasksInStation.length">{{ tasksInStation.length }}</b>
-          <b v-if="item.id === 'messages' && unreadTaskMessageCount">{{ unreadTaskMessageCount }}</b>
         </button>
       </nav>
       <div class="station-shift">
