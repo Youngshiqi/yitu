@@ -26,6 +26,7 @@ class Shipment(Base):
     status: Mapped[ShipmentStatus] = mapped_column(String(32), nullable=False)
     quote_id: Mapped[UUID | None] = mapped_column(ForeignKey("quote_snapshots.id", ondelete="RESTRICT"), nullable=True)
     package_id: Mapped[UUID | None] = mapped_column(ForeignKey("shipment_packages.id", ondelete="RESTRICT"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class ShipmentPackage(Base):

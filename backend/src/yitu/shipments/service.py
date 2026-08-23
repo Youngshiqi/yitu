@@ -48,6 +48,7 @@ class ShipmentView(BaseModel):
     delivery_method: DeliveryMethod
     quote_id: UUID | None = None
     package_id: UUID | None = None
+    created_at: datetime
 
 
 class ShipmentListResponse(BaseModel):
@@ -65,6 +66,7 @@ class ShipmentReadView(BaseModel):
     shipment: ShipmentView
     tracking: list[TrackingEventView]
     paid_total_cents: int
+    paid_at: datetime | None = None
     eta_at: datetime | None
     promised_delivery_at: datetime | None
     sender_address: dict[str, object] | None = None
@@ -114,7 +116,7 @@ class ShipmentApplicationService:
             count_query = count_query.where(Shipment.status == shipment_status)
         rows = (
             await self._session.scalars(
-                base_query.order_by(Shipment.shipment_no.desc())
+                base_query.order_by(Shipment.created_at.desc(), Shipment.shipment_no.desc())
                 .limit(limit)
                 .offset(offset)
             )
@@ -216,6 +218,7 @@ class ShipmentApplicationService:
                 status=ShipmentStatus.PENDING_PAYMENT,
                 quote_id=quote.id,
                 package_id=package.id,
+                created_at=Clock.now(),
             )
             self._session.add(shipment)
             await self._session.flush()
@@ -276,6 +279,16 @@ class ShipmentApplicationService:
             .order_by(SLAInstance.started_at.desc().nullslast(), SLAInstance.id.desc())
             .limit(1)
         )
+        paid_at = await self._session.scalar(
+            select(PaymentTransaction.created_at)
+            .where(
+                PaymentTransaction.shipment_id == shipment.id,
+                PaymentTransaction.transaction_type == "PAYMENT",
+                PaymentTransaction.status == "SUCCEEDED",
+            )
+            .order_by(PaymentTransaction.created_at.asc())
+            .limit(1)
+        )
         sender = await self._session.scalar(
             select(Address).where(Address.id == shipment.sender_address_id).options(
                 selectinload(Address.province_region), selectinload(Address.city_region), selectinload(Address.district_region)
@@ -293,6 +306,7 @@ class ShipmentApplicationService:
             shipment=ShipmentView.model_validate(shipment),
             tracking=[TrackingEventView.model_validate(event) for event in tracking],
             paid_total_cents=int(payment_amount or 0),
+            paid_at=paid_at,
             eta_at=latest_sla.eta_at if latest_sla is not None else None,
             promised_delivery_at=(
                 latest_sla.promised_delivery_at if latest_sla is not None else None
@@ -368,6 +382,16 @@ class ShipmentApplicationService:
                 PaymentTransaction.shipment_id == shipment.id, PaymentTransaction.status == "SUCCEEDED"
             )
         )
+        paid_at = await self._session.scalar(
+            select(PaymentTransaction.created_at)
+            .where(
+                PaymentTransaction.shipment_id == shipment.id,
+                PaymentTransaction.transaction_type == "PAYMENT",
+                PaymentTransaction.status == "SUCCEEDED",
+            )
+            .order_by(PaymentTransaction.created_at.asc())
+            .limit(1)
+        )
         sender = await self._load_address(shipment.sender_address_id)
         receiver = await self._load_address(shipment.receiver_address_id)
         package = await self._session.get(ShipmentPackage, shipment.package_id) if shipment.package_id else None
@@ -375,7 +399,7 @@ class ShipmentApplicationService:
         tracking = await list_tracking_events(self._session, shipment.id)
         return ShipmentReadView(
             shipment=ShipmentView.model_validate(shipment), tracking=[TrackingEventView.model_validate(item) for item in tracking],
-            paid_total_cents=int(payment_amount or 0), eta_at=None, promised_delivery_at=None,
+            paid_total_cents=int(payment_amount or 0), paid_at=paid_at, eta_at=None, promised_delivery_at=None,
             sender_address=address_response(sender) if sender else None,
             receiver_address=address_response(receiver) if receiver else None,
             package=self._package_view(package), quote=self._quote_view(quote),
