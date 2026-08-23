@@ -166,6 +166,7 @@ def _initial_messages(state: AgentState) -> list[ModelMessage]:
         address_labels="、".join(labels) if labels else "（无）",
     )
     messages = [ModelMessage(role="system", content=system)]
+    # 只取 10 条
     for item in state.get("history", [])[-10:]:
         messages.append(
             ModelMessage(

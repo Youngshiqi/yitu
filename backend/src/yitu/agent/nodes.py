@@ -41,27 +41,41 @@ def classify_intent_node(state: AgentState) -> AgentState:
     任何业务上下文。主图是线性路由，只查超时防卡死；轮次/工具调用预算
     留给草稿子图的 _budget_refusal 防止 agentic loop 失控。
     """
+    # 如果state里的router已经是blocked，直接返回空 dict
     if state.get("route") == "blocked":
         return {}
+
+    # 超时检查
     timeout_refusal = _timeout_refusal(state)
     if timeout_refusal is not None:
         return _blocked_update(timeout_refusal)
+    
+    # 安全拦截
+    # 取用户消息并strip()去除首尾空白
     message = state.get("user_message", "").strip()
+    # 调用 security_refusal 做正则匹配
     refusal = security_refusal(message)
     if refusal is not None:
         return _classification(refusal[0], "BLOCKED", "blocked", refusal[1])
+    
+    
     intent = state.get("semantic_intent", "GENERAL_CHAT")
     if state.get("requires_confirmation") or intent == "SENSITIVE_ACTION":
         return _classification("SENSITIVE_ACTION", "WRITE_ACTION", "confirmation")
+    
+    # 意图路由映射表
     routes: dict[AgentIntent, tuple[AgentRisk, AgentRoute]] = {
+        # LOW：无业务数据访问，闲聊/知识/运费
         "GENERAL_CHAT": ("LOW", "respond"),
         "KNOWLEDGE_QUERY": ("LOW", "knowledge"),
         "PRICING_QUERY": ("LOW", "pricing_rule"),
+        # PERSONAL_DATA：涉及个人数据，运单/地址/身份，必须按 actor 身份查询
         "SHIPMENT_QUERY": ("PERSONAL_DATA", "read_tool"),
-        "DRAFT_UPDATE": ("WRITE_ACTION", "draft"),
-        "SENSITIVE_ACTION": ("WRITE_ACTION", "confirmation"),
         "ADDRESS_QUERY": ("PERSONAL_DATA", "address_tool"),
         "IDENTITY_QUERY": ("PERSONAL_DATA", "identity_tool"),
+        # WRITE_ACTION：涉及写操做，草稿/敏感动作，必须走确认边界
+        "DRAFT_UPDATE": ("WRITE_ACTION", "draft"),
+        "SENSITIVE_ACTION": ("WRITE_ACTION", "confirmation"),
     }
     risk, route = routes.get(intent, ("BLOCKED", "blocked"))
     return _classification(intent, risk, route)
