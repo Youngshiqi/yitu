@@ -5,7 +5,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, Query
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yitu.identity.service import CurrentUser, get_current_user
@@ -50,6 +50,24 @@ async def mark_read(
     notification.read_at = to_business_timezone(Clock.now())
     await session.commit()
     return notification
+
+
+@router.post("/read-all")
+async def mark_all_read(
+    user: CurrentUser = _current_user,
+    session: AsyncSession = _session,
+) -> dict[str, int]:
+    """将当前客户自己的所有未读通知标记为已读。"""
+    result = await session.execute(
+        update(NotificationMessage)
+        .where(
+            NotificationMessage.recipient_id == user.id,
+            NotificationMessage.status == "UNREAD",
+        )
+        .values(status="READ", read_at=to_business_timezone(Clock.now()))
+    )
+    await session.commit()
+    return {"updated": result.rowcount or 0}
 
 
 @router.get("/stream")
