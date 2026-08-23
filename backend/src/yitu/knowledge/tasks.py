@@ -25,7 +25,13 @@ from yitu.knowledge.mineru_client import (
     MinerUTask,
 )
 from yitu.knowledge.models import DocumentStatus, KnowledgeDocument
-from yitu.knowledge.parsers import MinerUParser
+from yitu.knowledge.parsers import (
+    DocumentParseError,
+    DocxParser,
+    MinerUParser,
+    PlainTextParser,
+)
+from yitu.knowledge.service import SourceFormat, source_format_from_content_type
 from yitu.knowledge.state_machine import resume_parsing, transition
 from yitu.platform.config import get_settings
 from yitu.platform.database import SessionFactory
@@ -131,13 +137,21 @@ def _artifact_keys(document_id: UUID, task_id: str) -> tuple[str, str]:
     return f"{prefix}/result.zip", f"{prefix}/full.md"
 
 
+_LOCAL_PARSERS: dict[SourceFormat, PlainTextParser | DocxParser] = {
+    SourceFormat.MARKDOWN: PlainTextParser("markdown"),
+    SourceFormat.TEXT: PlainTextParser("text"),
+    SourceFormat.DOCX: DocxParser(),
+}
+
+
 async def _submit_mineru_document(
     document_id: UUID,
     *,
     store: BlobStore | None = None,
     client: MinerUGateway | None = None,
+    embedding_provider: EmbeddingProvider | None = None,
 ) -> bool:
-    """幂等提交 MinerU 任务；返回是否需要继续安排轮询。"""
+    """幂等提交解析任务；PDF 走 MinerU，md/txt/docx 本地解析。返回是否需要轮询。"""
     try:
         storage = store or get_blob_store()
     except RuntimeError:
@@ -145,11 +159,7 @@ async def _submit_mineru_document(
         return False
 
     try:
-        async with (
-            _mineru_gateway(client) as gateway,
-            SessionFactory() as session,
-            session.begin(),
-        ):
+        async with SessionFactory() as session, session.begin():
             document = await _locked_document(session, document_id)
             if (
                 document.status == DocumentStatus.PARSING
@@ -165,37 +175,87 @@ async def _submit_mineru_document(
             if document.status != DocumentStatus.QUEUED:
                 return False
 
-            # QUEUED 代表明确的新一轮解析，旧任务和旧产物不能被误复用。
-            document.mineru_task_id = None
-            document.markdown_artifact_key = None
-            document.result_archive_key = None
-            document.parse_finished_at = None
-            source_url = _presign_source(storage, document.object_key)
-            task_id = await gateway.submit(source_url)
-
-            now = datetime.now(UTC)
-            document.status = resume_parsing(document.status)
-            document.mineru_task_id = task_id
-            document.source_artifact_key = document.object_key
-            document.parse_started_at = now
-            document.parse_attempts += 1
-            document.error_message = None
-            document.updated_at = now
-            logger.info(
-                "提交 MinerU 任务 document_id=%s task_id=%s",
-                document.id,
-                task_id,
-            )
-            return True
+            source_format = source_format_from_content_type(document.content_type)
+            if source_format is not SourceFormat.PDF:
+                return await _parse_local_document(
+                    session, storage, document, source_format, embedding_provider
+                )
+            return await _submit_mineru_pdf(session, storage, document, client)
     except MinerURetryableError:
         raise
-    except MinerUPermanentError:
-        logger.warning(
-            "MinerU 提交永久失败 document_id=%s",
-            document_id,
-        )
-        await _mark_parse_failed(document_id, "MinerU task submission failed")
+    except (MinerUPermanentError, DocumentParseError, EmbeddingPermanentError):
+        logger.warning("解析永久失败 document_id=%s", document_id)
+        await _mark_parse_failed(document_id, "document parsing failed")
         return False
+
+
+async def _submit_mineru_pdf(
+    session: AsyncSession,
+    storage: BlobStore,
+    document: KnowledgeDocument,
+    client: MinerUGateway | None,
+) -> bool:
+    """提交 MinerU 解析任务（PDF 路径），返回 True 表示需要轮询。"""
+    async with _mineru_gateway(client) as gateway:
+        # QUEUED 代表明确的新一轮解析，旧任务和旧产物不能被误复用。
+        document.mineru_task_id = None
+        document.markdown_artifact_key = None
+        document.result_archive_key = None
+        document.parse_finished_at = None
+        source_url = _presign_source(storage, document.object_key)
+        task_id = await gateway.submit(source_url)
+
+        now = datetime.now(UTC)
+        document.status = resume_parsing(document.status)
+        document.mineru_task_id = task_id
+        document.source_artifact_key = document.object_key
+        document.parse_started_at = now
+        document.parse_attempts += 1
+        document.error_message = None
+        document.updated_at = now
+        logger.info(
+            "提交 MinerU 任务 document_id=%s task_id=%s",
+            document.id,
+            task_id,
+        )
+        return True
+
+
+async def _parse_local_document(
+    session: AsyncSession,
+    storage: BlobStore,
+    document: KnowledgeDocument,
+    source_format: SourceFormat,
+    embedding_provider: EmbeddingProvider | None,
+) -> bool:
+    """本地解析 md/txt/docx，跳过 MinerU，完成后进入待审核；返回 False 表示无需轮询。"""
+    parser = _LOCAL_PARSERS[source_format]
+    try:
+        raw = storage.open(document.object_key).read()
+    except (BotoCoreError, ClientError, OSError):
+        raise MinerURetryableError("Knowledge source read failed temporarily") from None
+
+    now = datetime.now(UTC)
+    document.status = resume_parsing(document.status)
+    document.source_artifact_key = document.object_key
+    document.parse_started_at = now
+    document.parse_attempts += 1
+    document.error_message = None
+    document.updated_at = now
+
+    parsed = parser.parse(raw)
+    document.parsed_text = parsed.text
+    document.parser_name = parsed.parser_name
+    document.parser_version = parsed.parser_version
+    document.parse_finished_at = now
+    await build_index_version(session, document.id, provider=embedding_provider)
+    document.status = transition(document.status, DocumentStatus.REVIEW_REQUIRED)
+    logger.info(
+        "完成本地解析 document_id=%s format=%s",
+        document.id,
+        source_format.value,
+    )
+    return False
 
 
 async def _poll_mineru_document(

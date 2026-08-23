@@ -42,7 +42,7 @@ async def upload_knowledge_document(
 ) -> KnowledgeDocumentView:
     data = await file.read()
     document = await upload_document(
-        session, get_blob_store(), filename=file.filename or "document.pdf",
+        session, get_blob_store(), filename=file.filename or "document",
         content_type=file.content_type, data=data, uploaded_by=user.id,
         max_bytes=get_settings().knowledge_max_upload_bytes,
     )
@@ -161,7 +161,7 @@ async def knowledge_document_file(
     _user: CurrentUser = _admins,
     session: AsyncSession = _session,
 ) -> Response:
-    """返回上传的原始 PDF 字节流，解析完成前用于回退预览。"""
+    """返回上传的原始文件字节流，解析完成前用于回退预览。"""
     document = await get_document(session, document_id)
     data = get_blob_store().open(document.object_key).read()
-    return Response(content=data, media_type="application/pdf")
+    return Response(content=data, media_type=document.content_type or "application/octet-stream")
