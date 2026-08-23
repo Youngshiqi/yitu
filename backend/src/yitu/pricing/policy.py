@@ -72,7 +72,7 @@ def calculate_quote(payload: PricingInput, rule: PricingRuleData | None = None) 
     _validate_input(payload)
     selected_route = route_code(payload.origin_district_code, payload.destination_district_code)
     selected_rule = rule or DEFAULT_RULES[selected_route]
-    volume_weight = int((Decimal(payload.length_cm * payload.width_cm * payload.height_cm) / Decimal(6)).quantize(Decimal(1), rounding=ROUND_CEILING))
+    volume_weight = int((Decimal(payload.length_cm * payload.width_cm * payload.height_cm) / Decimal(8)).quantize(Decimal(1), rounding=ROUND_CEILING))
     billable_weight = max(payload.actual_weight_grams, volume_weight)
     billed_units = max(0, ceil((billable_weight - 1000) / 500))
     items = [FeeItem("BASE_FEE", selected_rule.base_fee_cents)]
