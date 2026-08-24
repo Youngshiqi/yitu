@@ -4,9 +4,9 @@ from uuid import uuid4
 
 from langgraph.checkpoint.memory import MemorySaver
 
-from tests.agent.fakes import ScriptedModelPort
+from tests.agent.fakes import FakeShipmentWorkflowPort, ScriptedModelPort
 from tests.agent.test_assistant_graph import _context, _empty_shipment_graph
-from yitu.agent.model_adapter import ToolCallResult
+from yitu.agent.model_adapter import ToolCall, ToolCallResult
 from yitu.agent.runtime.event_mapper import (
     AgentEventMapper,
     AssistantMessageStored,
@@ -16,7 +16,14 @@ from yitu.agent.runtime.event_mapper import (
     WorkflowFailed,
 )
 from yitu.agent.runtime.runtime import AgentRuntime
+from yitu.agent.workflow_state import (
+    ConfirmationSnapshot,
+    DraftProgress,
+    QuoteProgress,
+    ShipmentReceipt,
+)
 from yitu.agent.workflows.assistant_graph import build_assistant_graph
+from yitu.agent.workflows.shipment_graph import build_shipment_graph
 
 
 def test_internal_token_maps_to_existing_delta_contract() -> None:
@@ -64,3 +71,31 @@ async def test_runtime_streams_real_graph_through_one_public_event_path() -> Non
 
     assert [name for name, _ in events] == ["user_message", "delta", "done"]
     assert events[1] == ("delta", {"content": "可以，我来帮你。"})
+
+
+async def test_runtime_exposes_confirmation_then_resumes_same_thread() -> None:
+    conversation_id = uuid4()
+    quote_id = uuid4()
+    model = ScriptedModelPort([
+        ToolCallResult(content=None, tool_calls=(ToolCall(id="handoff", name="start_shipment", arguments={"extracted_fields": {}}),)),
+        ToolCallResult(content="信息已齐全。", tool_calls=()),
+    ])
+    shipment = FakeShipmentWorkflowPort(
+        DraftProgress(status="READY_FOR_QUOTE", revision=1, missing_fields=[]),
+        quote=QuoteProgress(quote_id=quote_id, quote_version="v1", draft_revision=1, total_cents=1200),
+        confirmation=ConfirmationSnapshot(
+            conversation_id=conversation_id, draft_revision=1, quote_id=quote_id,
+            quote_version="v1", total_cents=1200, summary="文件",
+        ),
+        receipt=ShipmentReceipt(shipment_id=uuid4(), shipment_no="YT202608240003", total_cents=1200),
+    )
+    context = _context(model)
+    object.__setattr__(context, "shipment", shipment)
+    runtime = AgentRuntime(build_assistant_graph(build_shipment_graph(), checkpointer=MemorySaver()))
+
+    first = [event async for event in runtime.stream_message(conversation_id, "寄文件", context)]
+    second = [event async for event in runtime.stream_message(conversation_id, "确认", context)]
+
+    assert first[-1][0] == "done"
+    assert second[-1][0] == "done"
+    assert shipment.create_requests == ["request-1"]
