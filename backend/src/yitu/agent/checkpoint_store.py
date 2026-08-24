@@ -7,7 +7,8 @@
 
 import asyncio
 import logging
-from typing import Any
+from typing import Any, cast
+from uuid import UUID
 
 from langgraph.checkpoint.memory import MemorySaver
 
@@ -19,6 +20,7 @@ _memory_checkpointer: Any | None = None
 _postgres_pool: Any | None = None
 _postgres_checkpointer: Any | None = None
 _init_lock = asyncio.Lock()
+_compiled_runtime: Any | None = None
 
 
 def _conn_info_from_settings() -> str:
@@ -43,7 +45,7 @@ async def _open_postgres_checkpointer() -> tuple[Any, Any]:
         kwargs={"autocommit": True, "prepare_threshold": 0, "row_factory": dict_row},
     )
     await pool.open()
-    saver = AsyncPostgresSaver(pool)
+    saver = AsyncPostgresSaver(cast(Any, pool))
     await saver.setup()
     return pool, saver
 
@@ -64,9 +66,40 @@ async def get_shared_checkpointer() -> Any:
     return _postgres_checkpointer
 
 
+async def get_shared_agent_runtime() -> Any:
+    """根图与 checkpointer 进程级复用，请求级身份依赖仅通过 context 注入。"""
+    global _compiled_runtime
+    if _compiled_runtime is not None:
+        return _compiled_runtime
+    checkpointer = await get_shared_checkpointer()
+    async with _init_lock:
+        if _compiled_runtime is None:
+            from yitu.agent.runtime.runtime import AgentRuntime
+            from yitu.agent.workflows.assistant_graph import build_assistant_graph
+            from yitu.agent.workflows.shipment_graph import build_shipment_graph
+
+            child = build_shipment_graph()
+            graph = build_assistant_graph(child, checkpointer=checkpointer)
+            _compiled_runtime = AgentRuntime(graph)
+    return _compiled_runtime
+
+
+async def delete_thread(thread_id: UUID | str) -> None:
+    """会话删除后同步删除工作流 checkpoint，避免保留可恢复状态。"""
+    checkpointer = await get_shared_checkpointer()
+    async_delete = getattr(checkpointer, "adelete_thread", None)
+    if callable(async_delete):
+        await async_delete(str(thread_id))
+        return
+    sync_delete = getattr(checkpointer, "delete_thread", None)
+    if callable(sync_delete):
+        sync_delete(str(thread_id))
+
+
 async def dispose_checkpointer() -> None:
     """关闭 PostgreSQL 连接池，供应用或测试生命周期结束时调用。"""
-    global _postgres_pool, _postgres_checkpointer
+    global _compiled_runtime, _postgres_pool, _postgres_checkpointer
+    _compiled_runtime = None
     if _postgres_pool is not None:
         await _postgres_pool.close()
         _postgres_pool = None
@@ -76,12 +109,13 @@ async def dispose_checkpointer() -> None:
 
 async def _reset_for_tests() -> None:
     """重置模块级缓存并关闭遗留连接池，保证测试之间互不污染（仅测试使用）。"""
-    global _memory_checkpointer, _postgres_pool, _postgres_checkpointer
+    global _compiled_runtime, _memory_checkpointer, _postgres_pool, _postgres_checkpointer
     if _postgres_pool is not None:
         try:
             await _postgres_pool.close()
-        except Exception:  # noqa: BLE001 - 测试清理不因池状态异常而中断
+        except Exception:  # noqa: BLE001, S110 - 测试清理不因池状态异常而中断
             pass
     _postgres_pool = None
     _postgres_checkpointer = None
     _memory_checkpointer = None
+    _compiled_runtime = None
