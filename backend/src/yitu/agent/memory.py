@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import builtins
 import logging
 from datetime import datetime
 from typing import Protocol
@@ -119,7 +120,7 @@ class MemoryService:
 
     async def _embed_content(
         self, content: str
-    ) -> tuple[list[float] | None, str | None]:
+    ) -> tuple[builtins.list[float] | None, str | None]:
         """为记忆内容生成向量；任何失败都降级为 NULL，不阻塞记忆创建。"""
         provider = self._resolve_provider()
         if provider is None:
@@ -133,7 +134,7 @@ class MemoryService:
 
     async def recall(
         self, owner_id: UUID, query: str | None, limit: int = MEMORY_RECALL_LIMIT
-    ) -> list[str]:
+    ) -> builtins.list[str]:
         """按与当前用户消息的语义相关性召回记忆。
 
         排序策略：有余量向量且查询嵌入成功时按 cosine 距离升序；
@@ -171,7 +172,7 @@ class MemoryService:
         rows = await self._session.scalars(statement)
         return [row.content for row in rows.all()]
 
-    async def _embed_query(self, query: str) -> list[float] | None:
+    async def _embed_query(self, query: str) -> builtins.list[float] | None:
         provider = self._resolve_provider()
         if provider is None:
             return None

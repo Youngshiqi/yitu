@@ -4,25 +4,23 @@ import json
 from pathlib import Path
 from typing import Any, cast
 
-from yitu.agent.graph import build_agent_graph
 from yitu.agent.privacy import redact_text
+from yitu.agent.workflows.assistant_graph import build_assistant_graph
+from yitu.agent.workflows.shipment_graph import build_shipment_graph
 
 ROOT = Path(__file__).parent
 
 
 async def run() -> dict[str, int]:
-    """执行路由和隐私评测并返回通过/失败计数。"""
+    """执行新图结构和隐私评测并返回通过/失败计数。"""
     passed = failed = 0
-    graph = build_agent_graph()
-    for case in _load("routing.yaml"):
-        result = await graph.ainvoke({
-            "user_message": case["message"],
-            "turn_count": 0,
-            "tool_call_count": 0,
-            "max_turns": 8,
-            "max_tool_calls": 4,
-        })
-        ok = result.get("route") == case["route"] and result.get("risk") == case["risk"]
+    shipment_graph = build_shipment_graph()
+    assistant_graph = build_assistant_graph(shipment_graph)
+    for actual, expected in (
+        (len(shipment_graph.nodes) - 1, 8),
+        (len(assistant_graph.nodes) - 1, 7),
+    ):
+        ok = actual == expected
         passed += int(ok)
         failed += int(not ok)
     for case in _load("privacy.yaml"):

@@ -1,19 +1,20 @@
 """Agent 会话、记忆、草稿、授权和 SSE API。"""
 
 from collections.abc import AsyncIterator
-from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yitu.agent.checkpoint_store import get_shared_checkpointer
+from yitu.agent.checkpoint_store import get_shared_agent_runtime
 from yitu.agent.drafts import DraftPatch, DraftService, DraftValidationView, DraftView
 from yitu.agent.grants import GrantService, GrantView
 from yitu.agent.memory import MemoryCreate, MemoryService, MemoryView
 from yitu.agent.model_adapter import ModelAdapter, get_model_adapter
 from yitu.agent.models import AgentConversation, AgentMessage
+from yitu.agent.runtime import AgentRuntime
+from yitu.agent.runtime.context import build_runtime_context
 from yitu.agent.schemas import (
     AgentTurnView,
     ConversationCreate,
@@ -34,20 +35,15 @@ from yitu.platform.database import get_session
 from yitu.shipments.service import ShipmentView
 
 
-async def get_checkpointer() -> Any:
-    """返回进程级共享 checkpointer，绑定草稿 loop 的跨请求 thread 状态。
-
-    生产默认 AsyncPostgresSaver（langgraph-checkpoint-postgres），多副本部署
-    通过共享 PostgreSQL 持久化草稿 loop 轨迹；memory 后端用于本地与单测。
-    """
-    return await get_shared_checkpointer()
+async def get_agent_runtime() -> AgentRuntime:
+    return await get_shared_agent_runtime()
 
 
 router = APIRouter(prefix="/api/v1/agent/conversations", tags=["agent"])
 _session = Depends(get_session)
 _current_user = Depends(get_current_user)
 _model = Depends(get_model_adapter)
-_checkpointer = Depends(get_checkpointer)
+_runtime = Depends(get_agent_runtime)
 _last_event_id = Header(default=None, alias="Last-Event-ID")
 
 
@@ -155,28 +151,35 @@ async def issue_grant(conversation_id: UUID, user: CurrentUser = _current_user, 
 
 
 @router.post("/{conversation_id}/messages", response_model=AgentTurnView)
-async def send_message(conversation_id: UUID, request: MessageCreate, user: CurrentUser = _current_user, session: AsyncSession = _session, model: ModelAdapter = _model, checkpointer: Any = _checkpointer) -> AgentTurnView:
-    return await AgentConversationService(session, checkpointer).send_message(conversation_id, user, request.content, model)
+async def send_message(conversation_id: UUID, body: MessageCreate, request: Request, user: CurrentUser = _current_user, session: AsyncSession = _session, model: ModelAdapter = _model, runtime: AgentRuntime = _runtime) -> AgentTurnView:
+    await AgentConversationService(session).get_owned(conversation_id, user)
+    context = build_runtime_context(session=session, actor=user, model=model, request_id=request.state.request_id)
+    result = await AgentConversationService(session, runtime).send_message(conversation_id, body.content, context)
+    await session.commit()
+    return result
 
 
 @router.post("/{conversation_id}/messages/stream")
 async def stream_message(
     conversation_id: UUID,
-    request: MessageCreate,
+    body: MessageCreate,
+    request: Request,
     user: CurrentUser = _current_user,
     session: AsyncSession = _session,
     model: ModelAdapter = _model,
-    checkpointer: Any = _checkpointer,
+    runtime: AgentRuntime = _runtime,
 ) -> StreamingResponse:
     """通过单个鉴权请求实时返回用户消息确认和助手增量文本。"""
-    service = AgentConversationService(session, checkpointer)
+    service = AgentConversationService(session, runtime)
     await service.get_owned(conversation_id, user)
+    context = build_runtime_context(session=session, actor=user, model=model, request_id=request.state.request_id)
 
     async def events() -> AsyncIterator[str]:
         async for event, payload in service.stream_message(
-            conversation_id, user, request.content, model
+            conversation_id, body.content, context
         ):
             yield encode_agent_event(event, payload)
+        await session.commit()
 
     return StreamingResponse(
         events(),

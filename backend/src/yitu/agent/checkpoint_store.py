@@ -12,6 +12,7 @@ from uuid import UUID
 
 from langgraph.checkpoint.memory import MemorySaver
 
+from yitu.agent.runtime.runtime import AgentRuntime
 from yitu.platform.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -20,7 +21,7 @@ _memory_checkpointer: Any | None = None
 _postgres_pool: Any | None = None
 _postgres_checkpointer: Any | None = None
 _init_lock = asyncio.Lock()
-_compiled_runtime: Any | None = None
+_compiled_runtime: AgentRuntime | None = None
 
 
 def _conn_info_from_settings() -> str:
@@ -66,7 +67,7 @@ async def get_shared_checkpointer() -> Any:
     return _postgres_checkpointer
 
 
-async def get_shared_agent_runtime() -> Any:
+async def get_shared_agent_runtime() -> "AgentRuntime":
     """根图与 checkpointer 进程级复用，请求级身份依赖仅通过 context 注入。"""
     global _compiled_runtime
     if _compiled_runtime is not None:
@@ -74,7 +75,6 @@ async def get_shared_agent_runtime() -> Any:
     checkpointer = await get_shared_checkpointer()
     async with _init_lock:
         if _compiled_runtime is None:
-            from yitu.agent.runtime.runtime import AgentRuntime
             from yitu.agent.workflows.assistant_graph import build_assistant_graph
             from yitu.agent.workflows.shipment_graph import build_shipment_graph
 
