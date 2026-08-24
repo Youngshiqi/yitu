@@ -77,9 +77,20 @@ class FakeAssistantReadPort:
 
 
 class FakeShipmentWorkflowPort:
-    def __init__(self, progress: DraftProgress) -> None:
+    def __init__(
+        self,
+        progress: DraftProgress,
+        *,
+        quote: QuoteProgress | None = None,
+        confirmation: ConfirmationSnapshot | None = None,
+        receipt: ShipmentReceipt | None = None,
+    ) -> None:
         self.progress = progress
+        self.quote = quote
+        self.confirmation = confirmation
+        self.receipt = receipt
         self.draft_calls: list[DraftToolCall] = []
+        self.create_requests: list[str] = []
 
     async def load_progress(
         self, conversation_id: UUID, actor_id: UUID
@@ -101,13 +112,17 @@ class FakeShipmentWorkflowPort:
         self, conversation_id: UUID, actor_id: UUID
     ) -> QuoteProgress:
         del conversation_id, actor_id
-        raise NotImplementedError
+        if self.quote is None:
+            raise NotImplementedError
+        return self.quote
 
     async def prepare_confirmation(
         self, conversation_id: UUID, actor_id: UUID
     ) -> ConfirmationSnapshot:
         del conversation_id, actor_id
-        raise NotImplementedError
+        if self.confirmation is None:
+            raise NotImplementedError
+        return self.confirmation
 
     async def create_confirmed(
         self,
@@ -115,8 +130,11 @@ class FakeShipmentWorkflowPort:
         actor_id: UUID,
         request_id: str,
     ) -> ShipmentReceipt:
-        del conversation_id, actor_id, request_id
-        raise NotImplementedError
+        del conversation_id, actor_id
+        self.create_requests.append(request_id)
+        if self.receipt is None:
+            raise NotImplementedError
+        return self.receipt
 
 
 class FakeConversationPort:

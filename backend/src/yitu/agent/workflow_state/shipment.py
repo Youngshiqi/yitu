@@ -14,6 +14,8 @@ class ShipmentState(TypedDict, total=False):
     quote_progress: dict[str, object]
     confirmation_snapshot: dict[str, object]
     confirmation_decision: str
+    draft_ready: bool
+    draft_validated: bool
     workflow_result: dict[str, object]
     error: dict[str, object]
     turn_count: int

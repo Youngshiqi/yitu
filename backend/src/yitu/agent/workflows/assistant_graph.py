@@ -29,6 +29,8 @@ from yitu.agent.workflow_state import AssistantState
 
 def build_assistant_graph(
     shipment_graph: Any,
+    *,
+    checkpointer: Any = None,
 ) -> CompiledStateGraph[AssistantState, AgentRuntimeContext, AssistantState, AssistantState]:
     graph = StateGraph(AssistantState, context_schema=AgentRuntimeContext)
     graph.add_node("load_context_node", load_context_node)
@@ -50,4 +52,4 @@ def build_assistant_graph(
     graph.add_conditional_edges("shipment_workflow_node", shipment_result_route)
     graph.add_edge("finalize_turn_node", END)
     graph.add_edge("handle_failure_node", END)
-    return graph.compile(name="yitu_assistant")
+    return graph.compile(checkpointer=checkpointer, name="yitu_assistant")
