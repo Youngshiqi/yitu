@@ -319,7 +319,7 @@ class ShipmentWorkflowResult(BaseModel):
 
 不跨图共享完整工具历史、ORM 对象、数据库会话、模型客户端、完整业务草稿或可执行授权对象。
 
-正式实现必须使用 LangGraph 支持嵌套持久化和 interrupt 传播的子图组合方式。禁止在普通节点中创建一个脱离父图 thread 的独立子图调用。
+正式实现使用 LangGraph 1.2.11 已验证的嵌套方式：寄件子图编译时不挂独立 checkpointer；`shipment_workflow_node` 调用 `shipment_graph.ainvoke(child_input)` 时不覆盖父图 config。父图的 saver、`thread_id` 和 checkpoint namespace 由 LangGraph 自动传播，子图 interrupt 会暂停父图，父图上的 `Command(resume=...)` 会恢复子图。禁止传入新的 `thread_id` 或为子图创建独立 saver，使调用脱离父图 thread。
 
 ## 8. State 与 Checkpoint
 
