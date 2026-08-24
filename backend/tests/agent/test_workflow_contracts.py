@@ -1,7 +1,17 @@
 """工作流测试基础必须与开发数据库彻底隔离。"""
 
+import json
+from uuid import uuid4
+
 import pytest
 from conftest import require_test_database_url
+from pydantic import ValidationError
+
+from yitu.agent.workflow_state.contracts import (
+    AssistantToolCall,
+    ShipmentHandoff,
+    WorkflowError,
+)
 
 
 def test_database_tests_reject_non_test_database(
@@ -14,3 +24,33 @@ def test_database_tests_reject_non_test_database(
 
     with pytest.raises(RuntimeError, match="_test"):
         require_test_database_url()
+
+
+def test_shipment_handoff_rejects_identity_and_quote_fields() -> None:
+    with pytest.raises(ValidationError):
+        ShipmentHandoff.model_validate(
+            {
+                "user_message": "寄衣服",
+                "extracted_fields": {},
+                "user_id": str(uuid4()),
+            }
+        )
+
+
+def test_workflow_error_is_checkpoint_serializable() -> None:
+    error = WorkflowError(
+        code="QUOTE_EXPIRED",
+        message="报价已失效",
+        source_node="create_quote_node",
+    )
+
+    assert json.loads(error.model_dump_json())["retryable"] is False
+
+
+def test_assistant_tool_call_rejects_identity_in_model_arguments() -> None:
+    with pytest.raises(ValidationError, match="user_id"):
+        AssistantToolCall(
+            id="call-1",
+            name="get_current_identity",
+            arguments={"user_id": str(uuid4())},
+        )

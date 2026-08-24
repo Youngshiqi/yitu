@@ -2,7 +2,7 @@ from asyncio import to_thread
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import lru_cache
-from typing import Protocol
+from typing import Any, Protocol, cast
 from uuid import UUID
 
 from sqlalchemy import func, select, text, union
@@ -92,7 +92,9 @@ class KnowledgeRetriever:
             return []
 
         provider = self.provider or get_embedding_provider()
-        query_vector = list(await to_thread(_embed_query_cached, provider, normalized))
+        query_vector = list(
+            await to_thread(_embed_query_cached, cast(Any, provider), normalized)
+        )
         candidate_limit = min(max(limit * 8, 40), MAX_CANDIDATES)
         now = datetime.now(UTC)
 

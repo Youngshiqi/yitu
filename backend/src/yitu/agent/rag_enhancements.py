@@ -91,7 +91,10 @@ class LLMReranker:
             raw = await asyncio.wait_for(
                 self.adapter.complete(messages), timeout=RERANK_TIMEOUT_SECONDS
             )
-            payload = json.loads(_JSON_OBJECT_RE.search(raw).group(0))
+            match = _JSON_OBJECT_RE.search(raw)
+            if match is None:
+                return candidates
+            payload = json.loads(match.group(0))
             scores = {
                 int(item["index"]): float(item["score"])
                 for item in payload.get("scores", [])
