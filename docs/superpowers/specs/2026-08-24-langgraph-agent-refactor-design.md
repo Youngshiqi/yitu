@@ -465,7 +465,53 @@ compiled_graph.astream(
 
 它不能包含 `route == ...` 业务分支。
 
-## 11. REST 与 SSE 兼容
+## 11. Knowledge RAG 的模块归属与调用
+
+知识库继续作为独立深模块保留在 `yitu/knowledge`，不迁入 Agent 节点目录，也不反向依赖 `yitu/agent`。
+
+`knowledge` 模块继续负责：
+
+- 文档上传、解析、切片、向量化和索引；
+- 审核、发布和生命周期管理；
+- 已发布内容过滤；
+- 向量召回、中文全文召回和混合排序；
+- 结构化引用与无结果判断。
+
+LangGraph 负责决定何时检索、观察检索结果以及是否继续调用工具或生成回答：
+
+```text
+assistant_agent_node
+→ search_knowledge tool call
+→ assistant_tools_node
+→ KnowledgePort
+→ ProductionKnowledgeAdapter
+→ yitu/knowledge retrieval
+→ KnowledgeEvidence tool message
+→ assistant_agent_node
+→ grounded answer
+```
+
+最终自然语言回答由 `assistant_agent_node` 根据结构化证据生成，不在 `knowledge/service.py` 内生成，避免知识模块和 Agent 重复调用模型。
+
+`KnowledgePort` 只暴露小接口：
+
+```python
+class KnowledgePort(Protocol):
+    async def search(
+        self,
+        query: KnowledgeSearchInput,
+        *,
+        actor_id: UUID,
+    ) -> KnowledgeEvidence: ...
+```
+
+`KnowledgeEvidence` 至少包含 `found` 和结构化 `citations`。无已发布证据时返回 `found=False`，主 Agent 必须明确拒绝凭模型自身知识回答物流规则。
+
+确定性查询清洗、混合检索和基础排序属于 `knowledge`。如保留 LLM 查询改写或精排，它们作为 `KnowledgePort` 生产适配器内部的可选策略，通过 `ModelPort` 注入；主图不感知 BM25、pgvector、RRF 或精排实现细节。
+
+RAG 仍由现有 `assistant_tools_node` 执行，不增加 LangGraph 节点，总节点数保持 15 个。
+
+## 12. REST 与 SSE 兼容
 
 以下接口保持不变：
 
@@ -503,11 +549,11 @@ done: 完整助手消息
 
 前端不需要理解 `interrupt` 事件。
 
-## 12. 失败、重试与事务
+## 13. 失败、重试与事务
 
 保留显式 `handle_failure_node`，采用两级失败处理。
 
-### 12.1 可预期失败
+### 13.1 可预期失败
 
 节点将业务或受控基础设施失败转换为：
 
@@ -530,11 +576,11 @@ class WorkflowError(BaseModel):
 
 `handle_failure_node` 设置工作流状态、生成安全用户文案、记录 trace，并交给 `finalize_turn_node`。
 
-### 12.2 非预期异常
+### 13.2 非预期异常
 
 程序错误、连接突然中断和未知 SDK 异常由 `AgentRuntime` 捕获。Runtime 必须回滚未提交事务、记录内部 trace，并仅向用户返回稳定错误协议；不能将堆栈、SQL、提示词或敏感上下文写入公开响应。
 
-## 13. 命名、注释与可读性
+## 14. 命名、注释与可读性
 
 命名规则：
 
@@ -592,9 +638,9 @@ agent/
 └── service.py
 ```
 
-## 14. 测试策略
+## 15. 测试策略
 
-### 14.1 行为基线与 API 契约
+### 15.1 行为基线与 API 契约
 
 实施重构前先补测试并让旧架构通过：
 
@@ -604,11 +650,11 @@ agent/
 - 普通问答、知识查询、个人查询和寄件确认；
 - 授权、报价版本、并发确认和越权保护。
 
-### 14.2 节点测试
+### 15.2 节点测试
 
 使用内存 Port 直接测试节点的 State 增量、Port 参数、错误转换和敏感数据保护。测试面通过节点接口，不越过 interface 验证实现细节。
 
-### 14.3 图级测试
+### 15.3 图级测试
 
 使用 `MemorySaver` 和固定模型运行完整主图与子图，覆盖：
 
@@ -626,7 +672,7 @@ agent/
 - 完成后重复确认不重复建单；
 - 显式失败节点。
 
-### 14.4 PostgreSQL 恢复测试
+### 15.4 PostgreSQL 恢复测试
 
 使用真实 `AsyncPostgresSaver`：
 
@@ -639,7 +685,7 @@ agent/
 7. 验证父图收到结果并 finalize；
 8. 验证只创建一票运单。
 
-### 14.5 业务安全测试
+### 15.5 业务安全测试
 
 必须覆盖：
 
@@ -652,7 +698,7 @@ agent/
 - 模型或 RAG 暂时不可用；
 - 应用重启后的恢复。
 
-## 15. 评测重建
+## 16. 评测重建
 
 旧评测只调用浅路由图，不能证明真实 Agent 行为。重构为：
 
@@ -670,7 +716,7 @@ evals/
 
 确定性评测运行完整工作流和固定适配器；在线模型评测记录模型、配置、时间、样本和通过率。简历和面试中的所有指标必须能由仓库命令重新生成。
 
-## 16. 迁移顺序
+## 17. 迁移顺序
 
 ### 阶段一：行为基线
 
@@ -723,7 +769,7 @@ evals/
 
 不要长期保留 legacy/new 双执行路径。每个迁移阶段通过测试后直接替换旧路径，Git 提供回滚能力。
 
-## 17. 旧编排删除门禁
+## 18. 旧编排删除门禁
 
 重构完成后，`service.py` 不允许包含：
 
@@ -746,7 +792,7 @@ rg "build_draft_loop_graph|_clear_thread|route ==|model\.stream" backend/src/yit
 
 结果必须为空。删除的文件和符号不能继续被文档、测试、评测或入口引用。
 
-## 18. 提交策略
+## 19. 提交策略
 
 建议按以下小提交推进：
 
@@ -764,7 +810,7 @@ docs(agent): 更新架构与面试材料
 
 每个提交独立通过对应测试，不在最终代码中维护两套工作流。
 
-## 19. 完成标准
+## 20. 完成标准
 
 - 系统包含 15 个命名明确的 LangGraph 节点；
 - 主图和寄件子图各包含一个受限 ReAct 工具循环；
