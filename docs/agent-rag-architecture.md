@@ -1,45 +1,27 @@
 # Agent 与 RAG 架构
 
-当前 AI 助手由 LangGraph 直接拥有控制流，`service.py` 只保留会话 CRUD 和 Runtime 兼容门面。这不是 LangChain Deep Agents，而是面向物流领域的分层 LangGraph Agent。
+`agent/workflow/assistant_graph.py` 是唯一图构建入口。`workflow/nodes/` 只放 LangGraph 节点和路由；`capabilities/` 放节点调用的确定性业务服务；`runtime/` 负责依赖注入、`Command(resume=...)` 选择和公开 SSE 映射。不存在 `Port`、`Adapter`、寄件子图或第二个 ReAct 循环。
 
 ```mermaid
 flowchart LR
-    API[FastAPI] --> RT[AgentGraphRunner]
-    RT --> ROOT[7 节点 Assistant Graph]
-    ROOT -->|五个只读工具| PORTS[Ports]
-    ROOT -->|ShipmentHandoff| CHILD[8 节点 Shipment Graph]
-    CHILD -->|草稿工具| PORTS
-    CHILD -->|报价/授权/建单| DOMAIN[确定性业务服务]
-    PORTS --> KNOW[knowledge 检索模块]
-    RT --> CP[(Checkpoint)]
-    DOMAIN --> PG[(PostgreSQL 业务事实)]
+  API[FastAPI] --> R[AgentGraphRunner]
+  R --> G[Compiled assistant graph]
+  G --> K[KnowledgeSearchService]
+  K --> T[KnowledgeSearchTool]
+  T --> KR[KnowledgeRetriever]
+  KR --> DB[(PostgreSQL FTS + pgvector)]
+  G --> S[ShipmentConversationService]
+  S --> D[(草稿 / 报价 / Grant / 运单)]
 ```
 
-## 十五个节点
+## 在线检索
 
-主图：`load_context_node`、`security_gate_node`、`assistant_agent_node`、`assistant_tools_node`、`shipment_workflow_node`、`finalize_turn_node`、`handle_failure_node`。
+模型仅能调用 `search_knowledge`。`assistant_tools_node` 校验参数后调用 `KnowledgeSearchService.search()`，再进入既有 `KnowledgeSearchTool` 和 `KnowledgeRetriever`。检索返回的证据被序列化为 `role=tool` 消息，下一次 `assistant_agent_node` 调用模型时连同系统提示词和对话历史一起传入，因此最终回答由模型基于证据生成，而不是检索工具直接生成。
 
-寄件子图：`load_draft_node`、`draft_agent_node`、`draft_tools_node`、`validate_draft_node`、`create_quote_node`、`request_confirmation_node`、`create_confirmed_shipment_node`、`shipment_failure_node`。
+## 离线索引与在线召回
 
-两个受限 ReAct 循环是：
+离线解析、切片、向量化、审核发布仍属于独立 `knowledge/` 模块。在线阶段结合 PostgreSQL 全文索引与 pgvector 向量检索得到候选知识块，服务只向 Agent 暴露已发布、生效的证据及引用元数据。LangGraph 编排调用时机，不复制或替代 RAG 实现。
 
-```text
-assistant_agent_node <-> assistant_tools_node
-draft_agent_node     <-> draft_tools_node
-```
+## 状态边界
 
-根 Agent 可自主调用知识检索、本人运单、地址簿、当前身份和运费规则。寄件 Agent 只能检查或更新草稿、保存本次地址。报价、授权和建单不是模型工具。
-
-## State、Checkpoint 与 HITL
-
-根图和子图使用独立 `AssistantState` / `ShipmentState`，通过 `ShipmentHandoff` / `ShipmentWorkflowResult` 交换最小数据。Checkpoint 只保存工作流位置和 JSON 快照；草稿、报价、授权、运单以 PostgreSQL 业务表为准。
-
-版本化报价生成后，`request_confirmation_node` 调用 LangGraph `interrupt()`。下一请求用 `Command(resume=...)` 恢复：确认进入建单，取消结束，无关消息先以 `defer` 结束等待再进入新根回合。`AgentActionGrant` 继续负责版本绑定、一次性消费、行锁和防重放，它与 interrupt 解决不同问题。
-
-## RAG 边界
-
-离线摄入、解析、分块、向量化和在线混合检索仍在 `yitu/knowledge`。`assistant_tools_node` 通过 `KnowledgePort` 获取已发布证据，再回到 `assistant_agent_node` 生成 grounded answer。知识检索是 Agent 工具，不额外占用一个图节点。
-
-## 依赖和兼容
-
-节点依赖通过 `AgentRuntimeContext` 注入，ORM、Session、模型客户端和身份对象不进入 State。模型参数不能提供身份、会话或授权字段。REST 路径与 SSE `user_message/delta/done/error` 契约保持不变。
+`AssistantState` 保存消息、工具循环计数、寄件进度、报价进度、确认快照、回复和错误。身份、数据库 Session、模型与业务服务位于 `AgentRuntimeContext`，不会写进 checkpoint。短期对话消息和寄件业务事实在 PostgreSQL；checkpoint 只恢复图执行位置和中断状态。当前没有 MCP、Deep Agents、GraphRAG 或自动物流异常处置。
