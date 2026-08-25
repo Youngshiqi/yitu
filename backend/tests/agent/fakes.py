@@ -8,7 +8,7 @@ from yitu.agent.model_adapter import (
     ToolCallResult,
     ToolStreamEvent,
 )
-from yitu.agent.workflow_state.contracts import (
+from yitu.agent.workflow.contracts import (
     AssistantToolCall,
     AssistantToolObservation,
     ConfirmationSnapshot,
@@ -21,7 +21,7 @@ from yitu.agent.workflow_state.contracts import (
 )
 
 
-class ScriptedModelPort:
+class ScriptedModel:
     def __init__(self, responses: Sequence[ToolCallResult]) -> None:
         self._responses = list(responses)
         self.requests: list[list[ModelMessage]] = []
@@ -39,7 +39,7 @@ class ScriptedModelPort:
         yield ToolStreamEvent(result=response)
 
 
-class FakeKnowledgePort:
+class FakeKnowledgeSearchService:
     def __init__(self, evidence: KnowledgeEvidence) -> None:
         self.evidence = evidence
         self.queries: list[KnowledgeSearchInput] = []
@@ -55,7 +55,7 @@ class FakeKnowledgePort:
         return self.evidence
 
 
-class FakeAssistantReadPort:
+class FakeAssistantReadService:
     def __init__(self) -> None:
         self.calls: list[AssistantToolCall] = []
 
@@ -76,7 +76,7 @@ class FakeAssistantReadPort:
         )
 
 
-class FakeShipmentWorkflowPort:
+class FakeShipmentConversationService:
     def __init__(
         self,
         progress: DraftProgress,
@@ -97,6 +97,36 @@ class FakeShipmentWorkflowPort:
     ) -> DraftProgress:
         del conversation_id, actor_id
         return self.progress
+
+    async def apply_candidate_fields(
+        self,
+        conversation_id: UUID,
+        actor_id: UUID,
+        fields: dict[str, object],
+    ) -> DraftProgress:
+        del conversation_id, actor_id, fields
+        return self.progress
+
+    async def apply_user_message(
+        self,
+        conversation_id: UUID,
+        actor_id: UUID,
+        fields: dict[str, object],
+    ) -> DraftProgress:
+        return await self.apply_candidate_fields(conversation_id, actor_id, fields)
+
+    async def create_quote(
+        self, conversation_id: UUID, actor_id: UUID
+    ) -> QuoteProgress:
+        return await self.validate_and_quote(conversation_id, actor_id)
+
+    async def create_confirmed_shipment(
+        self,
+        conversation_id: UUID,
+        actor_id: UUID,
+        request_id: str,
+    ) -> ShipmentReceipt:
+        return await self.create_confirmed(conversation_id, actor_id, request_id)
 
     async def execute_draft_tool(
         self,
@@ -137,7 +167,7 @@ class FakeShipmentWorkflowPort:
         return self.receipt
 
 
-class FakeConversationPort:
+class FakeConversationMessageService:
     def __init__(self) -> None:
         self.messages: list[dict[str, object]] = []
 
@@ -170,7 +200,7 @@ class FakeConversationPort:
         return message
 
 
-class FakeTracePort:
+class FakeTrace:
     def __init__(self) -> None:
         self.events: list[tuple[str, dict[str, object]]] = []
 

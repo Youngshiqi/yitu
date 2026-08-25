@@ -5,23 +5,13 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yitu.agent.adapters import (
-    AgentTraceAdapter,
-    AssistantReadAdapter,
-    KnowledgeAdapter,
-    ModelAdapterPort,
-    ShipmentWorkflowAdapter,
-    SqlAlchemyConversationAdapter,
+from yitu.agent.capabilities import (
+    AssistantReadService,
+    ConversationMessageService,
+    KnowledgeSearchService,
+    ShipmentConversationService,
 )
 from yitu.agent.model_adapter import ModelAdapter
-from yitu.agent.ports import (
-    AssistantReadPort,
-    ConversationPort,
-    KnowledgePort,
-    ModelPort,
-    ShipmentWorkflowPort,
-    TracePort,
-)
 from yitu.agent.tools.base import ToolContext
 from yitu.agent.tools.knowledge import KnowledgeSearchTool
 from yitu.agent.tracing import AgentTrace
@@ -34,12 +24,12 @@ class AgentRuntimeContext:
 
     actor_id: UUID
     request_id: str
-    model: ModelPort
-    knowledge: KnowledgePort
-    assistant_reads: AssistantReadPort
-    shipment: ShipmentWorkflowPort
-    conversation: ConversationPort
-    trace: TracePort
+    model: ModelAdapter
+    knowledge_search_service: KnowledgeSearchService
+    assistant_read_service: AssistantReadService
+    shipment_conversation_service: ShipmentConversationService
+    conversation_service: ConversationMessageService
+    trace: AgentTrace
     history_limit: int = 20
     max_agent_turns: int = 8
     max_tool_calls: int = 4
@@ -57,12 +47,12 @@ def build_runtime_context(
     return AgentRuntimeContext(
         actor_id=actor.id,
         request_id=request_id,
-        model=ModelAdapterPort(model),
-        knowledge=KnowledgeAdapter(
+        model=model,
+        knowledge_search_service=KnowledgeSearchService(
             tool=KnowledgeSearchTool(), context=tool_context, actor=actor
         ),
-        assistant_reads=AssistantReadAdapter(context=tool_context, actor=actor),
-        shipment=ShipmentWorkflowAdapter(session=session, actor=actor),
-        conversation=SqlAlchemyConversationAdapter(session),
-        trace=AgentTraceAdapter(AgentTrace()),
+        assistant_read_service=AssistantReadService(context=tool_context, actor=actor),
+        shipment_conversation_service=ShipmentConversationService(session, actor),
+        conversation_service=ConversationMessageService(session),
+        trace=AgentTrace(),
     )

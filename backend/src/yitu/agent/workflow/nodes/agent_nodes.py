@@ -7,25 +7,26 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from yitu.agent.model_adapter import ModelMessage, ToolCall
 from yitu.agent.prompts import BUDGET_REFUSAL, SYSTEM_PROMPT
-from yitu.agent.runtime.context import AgentRuntimeContext
+from yitu.agent.runtime.graph_context import AgentRuntimeContext
 from yitu.agent.tools.shipments import ShipmentReadInput
-from yitu.agent.workflow_state import (
+from yitu.agent.workflow.state import (
     AssistantState,
     AssistantToolCall,
     AssistantToolObservation,
     KnowledgeSearchInput,
-    ShipmentHandoff,
     WorkflowError,
 )
 
 
-class _ShipmentHandoffArguments(BaseModel):
+class _StartShipmentArguments(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     extracted_fields: dict[str, object] = Field(default_factory=dict)
 
 
-def _function_tool(name: str, description: str, parameters: dict[str, object]) -> dict[str, object]:
+def _function_tool(
+    name: str, description: str, parameters: dict[str, object]
+) -> dict[str, object]:
     return {
         "type": "function",
         "function": {
@@ -52,13 +53,17 @@ ASSISTANT_TOOL_SPECS: tuple[dict[str, object], ...] = (
         "读取当前登录客户有权访问的运单、轨迹、费用和时效。",
         ShipmentReadInput.model_json_schema(),
     ),
-    _function_tool("list_addresses", "读取当前客户的最小化地址选项。", _EMPTY_PARAMETERS),
+    _function_tool(
+        "list_addresses", "读取当前客户的最小化地址选项。", _EMPTY_PARAMETERS
+    ),
     _function_tool("get_current_identity", "读取当前登录身份摘要。", _EMPTY_PARAMETERS),
-    _function_tool("get_pricing_rules", "读取当前生效的确定性运费规则。", _EMPTY_PARAMETERS),
+    _function_tool(
+        "get_pricing_rules", "读取当前生效的确定性运费规则。", _EMPTY_PARAMETERS
+    ),
     _function_tool(
         "start_shipment",
         "用户要新建或继续寄件时，把已明确的草稿候选字段交给寄件工作流。",
-        _ShipmentHandoffArguments.model_json_schema(),
+        _StartShipmentArguments.model_json_schema(),
     ),
 )
 
@@ -91,33 +96,36 @@ async def assistant_agent_node(
         "content": result.content or "",
     }
     if result.tool_calls:
-        assistant_message["tool_calls"] = [_tool_call_dict(call) for call in result.tool_calls]
+        assistant_message["tool_calls"] = [
+            _tool_call_dict(call) for call in result.tool_calls
+        ]
     updated_messages.append(assistant_message)
     update: AssistantState = {
         "messages": updated_messages,
         "turn_count": turn_count + 1,
     }
-    handoff_calls = [call for call in result.tool_calls if call.name == "start_shipment"]
-    if handoff_calls:
+    shipment_calls = [
+        call for call in result.tool_calls if call.name == "start_shipment"
+    ]
+    if shipment_calls:
         if len(result.tool_calls) != 1:
             return _workflow_error(
-                "MIXED_HANDOFF_TOOLS",
-                "寄件交接不能与其他工具同时执行",
+                "MIXED_SHIPMENT_TOOLS",
+                "开始寄件不能与其他工具同时执行",
                 "assistant_agent_node",
             )
         try:
-            args = _ShipmentHandoffArguments.model_validate(handoff_calls[0].arguments)
-            handoff = ShipmentHandoff(
-                user_message=state["user_message"],
-                extracted_fields=args.extracted_fields,
-            )
+            args = _StartShipmentArguments.model_validate(shipment_calls[0].arguments)
         except ValidationError:
             return _workflow_error(
-                "INVALID_SHIPMENT_HANDOFF",
-                "寄件交接参数无效",
+                "INVALID_START_SHIPMENT",
+                "开始寄件参数无效",
                 "assistant_agent_node",
             )
-        update["shipment_handoff"] = handoff.model_dump(mode="json")
+        # `start_shipment` 只是主 Agent 到确定性寄件节点的交接标记，
+        # 不是可执行写工具，也不再构造寄件子图状态。
+        update["shipment_requested"] = True
+        update["shipment_candidate_fields"] = args.extracted_fields
     elif result.tool_calls:
         update["pending_tool_calls"] = [
             _tool_call_dict(call) for call in result.tool_calls
@@ -144,7 +152,7 @@ async def assistant_tools_node(
             call = AssistantToolCall.model_validate(raw_call)
             if call.name == "search_knowledge":
                 request = KnowledgeSearchInput.model_validate(call.arguments)
-                evidence = await runtime.context.knowledge.search(
+                evidence = await runtime.context.knowledge_search_service.search(
                     request, actor_id=runtime.context.actor_id
                 )
                 observation = AssistantToolObservation(
@@ -155,7 +163,7 @@ async def assistant_tools_node(
                     data=evidence.model_dump(mode="json"),
                 )
             else:
-                observation = await runtime.context.assistant_reads.execute(
+                observation = await runtime.context.assistant_read_service.execute(
                     call, actor_id=runtime.context.actor_id
                 )
             messages.append(
@@ -184,8 +192,8 @@ async def assistant_tools_node(
 def assistant_action_route(state: AssistantState) -> str:
     if state.get("error"):
         return "handle_failure_node"
-    if state.get("shipment_handoff"):
-        return "shipment_workflow_node"
+    if state.get("shipment_requested"):
+        return "shipment_process_node"
     if state.get("pending_tool_calls"):
         return "assistant_tools_node"
     return "finalize_turn_node"

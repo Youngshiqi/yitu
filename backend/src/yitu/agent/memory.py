@@ -99,7 +99,9 @@ class MemoryService:
 
     async def create(self, request: MemoryCreate, actor: CurrentUser) -> MemoryView:
         if contains_forbidden_memory(request.content):
-            raise AppError("AGENT_MEMORY_SENSITIVE", "记忆不能保存密钥、令牌或联系方式", 422)
+            raise AppError(
+                "AGENT_MEMORY_SENSITIVE", "记忆不能保存密钥、令牌或联系方式", 422
+            )
         now = Clock.now()
         content = redact_text(request.content)
         embedding, embedding_model = await self._embed_content(content)
@@ -146,7 +148,8 @@ class MemoryService:
             .where(
                 AgentMemory.owner_id == owner_id,
                 AgentMemory.active.is_(True),
-                (AgentMemory.expires_at.is_(None)) | (AgentMemory.expires_at > Clock.now()),
+                (AgentMemory.expires_at.is_(None))
+                | (AgentMemory.expires_at > Clock.now()),
             )
             .order_by(AgentMemory.updated_at.desc(), AgentMemory.id)
             .limit(limit)
@@ -163,7 +166,9 @@ class MemoryService:
                         | (AgentMemory.expires_at > Clock.now()),
                     )
                     .order_by(
-                        AgentMemory.embedding.cosine_distance(query_vector).asc().nulls_last(),
+                        AgentMemory.embedding.cosine_distance(query_vector)
+                        .asc()
+                        .nulls_last(),
                         AgentMemory.updated_at.desc(),
                         AgentMemory.id,
                     )
@@ -184,7 +189,9 @@ class MemoryService:
 
     async def delete(self, memory_id: UUID, actor: CurrentUser) -> None:
         row = await self._session.scalar(
-            select(AgentMemory).where(AgentMemory.id == memory_id, AgentMemory.owner_id == actor.id)
+            select(AgentMemory).where(
+                AgentMemory.id == memory_id, AgentMemory.owner_id == actor.id
+            )
         )
         if row is None:
             raise AppError("AGENT_MEMORY_NOT_FOUND", "记忆不存在", 404)

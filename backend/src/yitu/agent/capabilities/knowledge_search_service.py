@@ -7,7 +7,7 @@ from yitu.agent.tools.knowledge import (
     KnowledgeSearchInput as ToolKnowledgeSearchInput,
 )
 from yitu.agent.tools.knowledge import KnowledgeSearchTool
-from yitu.agent.workflow_state.contracts import (
+from yitu.agent.workflow.contracts import (
     KnowledgeCitation,
     KnowledgeEvidence,
     KnowledgeSearchInput,
@@ -16,7 +16,7 @@ from yitu.identity.service import CurrentUser
 from yitu.platform.errors import AppError
 
 
-class KnowledgeAdapter:
+class KnowledgeSearchService:
     def __init__(
         self,
         *,
@@ -43,7 +43,8 @@ class KnowledgeAdapter:
         return KnowledgeEvidence(
             found=result.found,
             citations=[
-                KnowledgeCitation.model_validate(item.model_dump()) for item in citations
+                KnowledgeCitation.model_validate(item.model_dump())
+                for item in citations
             ],
             message=result.message,
         )

@@ -6,8 +6,8 @@ from uuid import UUID
 from langgraph.runtime import Runtime
 
 from yitu.agent.prompts import CROSS_USER_REFUSAL, INJECTION_REFUSAL
-from yitu.agent.runtime.context import AgentRuntimeContext
-from yitu.agent.workflow_state import AssistantState, WorkflowError
+from yitu.agent.runtime.graph_context import AgentRuntimeContext
+from yitu.agent.workflow.state import AssistantState, WorkflowError
 
 _INJECTION_PATTERNS = (
     re.compile(r"忽略.{0,8}(之前|以上|系统).{0,8}(指令|规则|提示词)"),
@@ -29,7 +29,7 @@ async def load_context_node(
     runtime: Runtime[AgentRuntimeContext],
 ) -> AssistantState:
     conversation_id = UUID(state["conversation_id"])
-    history = await runtime.context.conversation.load_history(
+    history = await runtime.context.conversation_service.load_history(
         conversation_id,
         runtime.context.actor_id,
         limit=runtime.context.history_limit,
@@ -39,25 +39,35 @@ async def load_context_node(
         {
             "role": str(item.get("role", "user")),
             "content": str(item.get("content", "")),
+            **({"tool_calls": item["tool_calls"]} if "tool_calls" in item else {}),
             **(
-                {"tool_calls": item["tool_calls"]}
-                if "tool_calls" in item
-                else {}
-            ),
-            **(
-                {"tool_call_id": item["tool_call_id"]}
-                if "tool_call_id" in item
-                else {}
+                {"tool_call_id": item["tool_call_id"]} if "tool_call_id" in item else {}
             ),
         }
         for item in history
     ]
-    if not messages or messages[-1].get("role") != "user" or messages[-1].get(
-        "content"
-    ) != user_message:
+    if (
+        not messages
+        or messages[-1].get("role") != "user"
+        or messages[-1].get("content") != user_message
+    ):
         messages.append({"role": "user", "content": user_message})
     runtime.context.trace.record("context.loaded", message_count=len(messages))
-    return {"messages": messages, "turn_count": 0, "tool_call_count": 0}
+    # 同一 thread 的 checkpoint 会跨回合保留 State；本轮入口必须清掉上轮
+    # 的路由标记和交易中间数据，不能因为陈旧值再次进入寄件或建单节点。
+    return {
+        "messages": messages,
+        "turn_count": 0,
+        "tool_call_count": 0,
+        "pending_tool_calls": [],
+        "shipment_requested": False,
+        "shipment_candidate_fields": {},
+        "shipment_progress": {},
+        "quote_progress": {},
+        "confirmation_snapshot": {},
+        "response": "",
+        "error": {},
+    }
 
 
 def security_gate_node(

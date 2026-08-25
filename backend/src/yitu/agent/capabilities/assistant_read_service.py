@@ -8,7 +8,7 @@ from yitu.agent.tools.base import ToolContext, ToolResult
 from yitu.agent.tools.identity import AddressBookTool, IdentityTool
 from yitu.agent.tools.pricing import PricingRuleTool
 from yitu.agent.tools.shipments import ShipmentReadInput, ShipmentReadTool
-from yitu.agent.workflow_state.contracts import (
+from yitu.agent.workflow.contracts import (
     AssistantToolCall,
     AssistantToolObservation,
 )
@@ -16,7 +16,7 @@ from yitu.identity.service import CurrentUser
 from yitu.platform.errors import AppError
 
 
-class AssistantReadAdapter:
+class AssistantReadService:
     def __init__(self, *, context: ToolContext, actor: CurrentUser) -> None:
         self._context = context
         self._actor = actor

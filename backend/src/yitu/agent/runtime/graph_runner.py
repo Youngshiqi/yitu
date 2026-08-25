@@ -6,7 +6,6 @@ from uuid import UUID
 
 from langgraph.types import Command
 
-from yitu.agent.runtime.context import AgentRuntimeContext
 from yitu.agent.runtime.event_mapper import (
     AgentEventMapper,
     AssistantMessageStored,
@@ -15,6 +14,7 @@ from yitu.agent.runtime.event_mapper import (
     UserMessageStored,
     WorkflowFailed,
 )
+from yitu.agent.runtime.graph_context import AgentRuntimeContext
 from yitu.agent.schemas import AgentTurnView, MessageView
 
 _CONFIRM_WORDS = {"确认", "确认寄件", "确认下单", "同意", "confirm"}
@@ -56,13 +56,14 @@ class AgentGraphRunner:
         content: str,
         context: AgentRuntimeContext,
     ) -> AsyncIterator[PublicAgentEvent]:
-        config: dict[str, Any] = {
-            "configurable": {"thread_id": str(conversation_id)}
-        }
+        # conversation_id 同时作为业务会话 ID 和 LangGraph thread_id，
+        # 用于在不同请求之间恢复同一会话的 State/interrupt。
+        config: dict[str, Any] = {"configurable": {"thread_id": str(conversation_id)}}
         try:
+            # 先检查是否停在人工确认节点；只有固定确认词/取消词才恢复 interrupt。
             pending = await self._pending_interrupt(config)
             normalized = _normalize_decision(content)
-            user_payload = await context.conversation.append_message(
+            user_payload = await context.conversation_service.append_message(
                 conversation_id,
                 context.actor_id,
                 role="user",
@@ -75,7 +76,10 @@ class AgentGraphRunner:
             if pending and normalized in {"confirm", "cancel"}:
                 graph_input: Any = Command(resume={"decision": normalized})
             elif pending:
-                await self._drain(Command(resume={"decision": "defer"}), config, context)
+                # 用户发送了与确认无关的新问题：先结束旧的确认等待，再以普通新回合处理。
+                await self._drain(
+                    Command(resume={"decision": "defer"}), config, context
+                )
                 graph_input = {
                     "conversation_id": str(conversation_id),
                     "user_message": content,
@@ -86,6 +90,7 @@ class AgentGraphRunner:
                     "user_message": content,
                 }
 
+            # custom 流承载节点产生的 token，values 流保留最终 State，便于识别 interrupt。
             final_state: dict[str, object] = {}
             async for mode, chunk in self._graph.astream(
                 graph_input,
@@ -94,7 +99,9 @@ class AgentGraphRunner:
                 stream_mode=["custom", "values"],
             ):
                 if mode == "custom" and isinstance(chunk, dict):
-                    token = chunk.get("content") if chunk.get("type") == "token" else None
+                    token = (
+                        chunk.get("content") if chunk.get("type") == "token" else None
+                    )
                     if isinstance(token, str) and token:
                         event = self._mapper.map(TokenGenerated(content=token))
                         if event is not None:
@@ -102,6 +109,8 @@ class AgentGraphRunner:
                 elif mode == "values" and isinstance(chunk, dict):
                     final_state = chunk
 
+            # interrupt 不会产生普通 assistant 消息，因此由 Runner 根据确认负载生成确认卡片；
+            # 其他路径的 assistant 消息已经由 finalize/handle_failure 节点持久化。
             interrupt_payload = _interrupt_payload(final_state)
             assistant_payload: dict[str, object] | None
             if interrupt_payload is not None:
@@ -109,7 +118,7 @@ class AgentGraphRunner:
                     conversation_id, context, interrupt_payload
                 )
             else:
-                history = await context.conversation.load_history(
+                history = await context.conversation_service.load_history(
                     conversation_id, context.actor_id, limit=1
                 )
                 assistant_payload = history[-1] if history else None
@@ -152,7 +161,7 @@ class AgentGraphRunner:
         amount = int(total) / 100 if isinstance(total, int) else 0
         summary = str(payload.get("summary", ""))
         content = f"寄件信息：{summary}。报价 {amount:.2f} 元，请确认是否创建运单。"
-        return await context.conversation.append_message(
+        return await context.conversation_service.append_message(
             conversation_id,
             context.actor_id,
             role="assistant",

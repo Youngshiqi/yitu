@@ -7,9 +7,8 @@ import pytest
 from conftest import require_test_database_url
 from pydantic import ValidationError
 
-from yitu.agent.workflow_state.contracts import (
+from yitu.agent.workflow.contracts import (
     AssistantToolCall,
-    ShipmentHandoff,
     WorkflowError,
 )
 
@@ -26,14 +25,12 @@ def test_database_tests_reject_non_test_database(
         require_test_database_url()
 
 
-def test_shipment_handoff_rejects_identity_and_quote_fields() -> None:
+def test_agent_tool_call_rejects_identity_and_quote_fields() -> None:
     with pytest.raises(ValidationError):
-        ShipmentHandoff.model_validate(
-            {
-                "user_message": "寄衣服",
-                "extracted_fields": {},
-                "user_id": str(uuid4()),
-            }
+        AssistantToolCall(
+            id="call-1",
+            name="get_own_shipment",
+            arguments={"user_id": str(uuid4()), "quote_id": str(uuid4())},
         )
 
 

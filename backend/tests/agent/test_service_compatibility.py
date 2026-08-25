@@ -26,7 +26,9 @@ async def test_service_stream_forwards_graph_runner_public_events() -> None:
     events = [
         event
         async for event in service.stream_message(
-            uuid4(), "寄件", object()  # type: ignore[arg-type]
+            uuid4(),
+            "寄件",
+            object(),  # type: ignore[arg-type]
         )
     ]
 

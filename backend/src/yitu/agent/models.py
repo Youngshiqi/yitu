@@ -35,8 +35,12 @@ class AgentConversation(Base):
     )
     title: Mapped[str | None] = mapped_column(String(128), nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="ACTIVE")
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
 
 
 class AgentMessage(Base):
@@ -59,7 +63,9 @@ class AgentMessage(Base):
     role: Mapped[str] = mapped_column(String(32), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     envelope: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
 
 
 class AgentShipmentDraft(Base):
@@ -67,7 +73,9 @@ class AgentShipmentDraft(Base):
 
     __tablename__ = "agent_shipment_drafts"
     __table_args__ = (
-        UniqueConstraint("conversation_id", name="uq_agent_shipment_drafts_conversation"),
+        UniqueConstraint(
+            "conversation_id", name="uq_agent_shipment_drafts_conversation"
+        ),
         Index("ix_agent_shipment_drafts_owner_updated", "owner_id", "updated_at"),
     )
 
@@ -78,15 +86,23 @@ class AgentShipmentDraft(Base):
     owner_id: Mapped[UUID] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
     )
-    payload: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False, default=dict)
+    payload: Mapped[dict[str, object]] = mapped_column(
+        JSONB, nullable=False, default=dict
+    )
     revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    status: Mapped[str] = mapped_column(String(32), nullable=False, default="INCOMPLETE")
-    missing_fields: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
+    status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="INCOMPLETE"
+    )
+    missing_fields: Mapped[list[str]] = mapped_column(
+        JSONB, nullable=False, default=list
+    )
     quote_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("quote_snapshots.id", ondelete="RESTRICT"), nullable=True
     )
     quote_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
 
 
 class AgentActionGrant(Base):
@@ -117,9 +133,15 @@ class AgentActionGrant(Base):
     command_snapshot: Mapped[dict[str, object]] = mapped_column(JSONB, nullable=False)
     command_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     nonce: Mapped[str] = mapped_column(String(64), nullable=False)
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    consumed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
 
 
 class AgentMemory(Base):
@@ -144,9 +166,15 @@ class AgentMemory(Base):
     memory_type: Mapped[str] = mapped_column(String(32), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     active: Mapped[bool] = mapped_column(nullable=False, default=True)
-    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
     embedding: Mapped[list[float] | None] = mapped_column(
         Vector(QWEN_EMBEDDING_DIMENSION), nullable=True
     )

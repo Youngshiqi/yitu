@@ -94,7 +94,11 @@ class FixedModelAdapter:
 
     async def complete(self, messages: Sequence[ModelMessage]) -> str:
         last_user = next(
-            (message.content for message in reversed(messages) if message.role == "user"),
+            (
+                message.content
+                for message in reversed(messages)
+                if message.role == "user"
+            ),
             "",
         )
         return f"已收到你的消息：{last_user}"
@@ -384,7 +388,9 @@ class OpenAICompatibleModelAdapter:
                 if delta.tool_calls:
                     for tc in delta.tool_calls:
                         idx = tc.index
-                        slot = tool_acc.setdefault(idx, {"id": "", "name": "", "arguments": ""})
+                        slot = tool_acc.setdefault(
+                            idx, {"id": "", "name": "", "arguments": ""}
+                        )
                         if tc.id:
                             slot["id"] = tc.id
                         if tc.type:
@@ -439,9 +445,7 @@ class OpenAICompatibleModelAdapter:
                         "type": "function",
                         "function": {
                             "name": call.name,
-                            "arguments": json.dumps(
-                                call.arguments, ensure_ascii=False
-                            ),
+                            "arguments": json.dumps(call.arguments, ensure_ascii=False),
                         },
                     }
                     for call in message.tool_calls

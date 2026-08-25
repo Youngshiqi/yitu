@@ -4,7 +4,10 @@ import re
 
 _SECRET_PATTERNS = (
     (re.compile(r"\b(?:sk|AKID)[A-Za-z0-9_-]{12,}\b"), "[密钥已隐藏]"),
-    (re.compile(r"\beyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b"), "[令牌已隐藏]"),
+    (
+        re.compile(r"\beyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b"),
+        "[令牌已隐藏]",
+    ),
     (re.compile(r"(?<!\d)1[3-9]\d{9}(?!\d)"), "[手机号已隐藏]"),
     (re.compile(r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b"), "[邮箱已隐藏]"),
 )

@@ -106,9 +106,7 @@ async def execute_save_address(
     patch = DraftPatch(
         sender_address_id=address.id if args.role == "sender" else None,
         receiver_address_id=address.id if args.role == "receiver" else None,
-        origin_district_code=(
-            address.district_code if args.role == "sender" else None
-        ),
+        origin_district_code=(address.district_code if args.role == "sender" else None),
         destination_district_code=(
             address.district_code if args.role == "receiver" else None
         ),

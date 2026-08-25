@@ -38,7 +38,11 @@ class AgentTrace:
         return {
             "trace_id": str(self.trace_id),
             "events": [
-                {"event": item.event, "created_at": item.created_at.isoformat(), **item.payload}
+                {
+                    "event": item.event,
+                    "created_at": item.created_at.isoformat(),
+                    **item.payload,
+                }
                 for item in self.events
             ],
         }

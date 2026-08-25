@@ -11,7 +11,7 @@ from yitu.platform.clock import Clock
 from yitu.platform.errors import AppError
 
 
-class SqlAlchemyConversationAdapter:
+class ConversationMessageService:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
@@ -66,7 +66,5 @@ class SqlAlchemyConversationAdapter:
     ) -> AgentConversation:
         conversation = await self._session.get(AgentConversation, conversation_id)
         if conversation is None or conversation.owner_id != actor_id:
-            raise AppError(
-                "AGENT_CONVERSATION_NOT_FOUND", "Agent 会话不存在", 404
-            )
+            raise AppError("AGENT_CONVERSATION_NOT_FOUND", "Agent 会话不存在", 404)
         return conversation

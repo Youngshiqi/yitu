@@ -12,7 +12,7 @@ from uuid import UUID
 
 from langgraph.checkpoint.memory import MemorySaver
 
-from yitu.agent.runtime.runner import AgentGraphRunner
+from yitu.agent.runtime.graph_runner import AgentGraphRunner
 from yitu.platform.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -75,11 +75,9 @@ async def get_shared_agent_graph_runner() -> AgentGraphRunner:
     checkpointer = await get_shared_checkpointer()
     async with _init_lock:
         if _compiled_runner is None:
-            from yitu.agent.workflows.assistant_graph import build_assistant_graph
-            from yitu.agent.workflows.shipment_graph import build_shipment_graph
+            from yitu.agent.workflow.assistant_graph import build_assistant_graph
 
-            child = build_shipment_graph()
-            graph = build_assistant_graph(child, checkpointer=checkpointer)
+            graph = build_assistant_graph(checkpointer=checkpointer)
             _compiled_runner = AgentGraphRunner(graph)
     return _compiled_runner
 
@@ -109,7 +107,11 @@ async def dispose_checkpointer() -> None:
 
 async def _reset_for_tests() -> None:
     """重置模块级缓存并关闭遗留连接池，保证测试之间互不污染（仅测试使用）。"""
-    global _compiled_runner, _memory_checkpointer, _postgres_pool, _postgres_checkpointer
+    global \
+        _compiled_runner, \
+        _memory_checkpointer, \
+        _postgres_pool, \
+        _postgres_checkpointer
     if _postgres_pool is not None:
         try:
             await _postgres_pool.close()

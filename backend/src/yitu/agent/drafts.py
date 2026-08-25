@@ -31,7 +31,9 @@ class DraftPatch(BaseModel):
     pickup_method: PickupMethod | None = None
     delivery_method: DeliveryMethod | None = None
     origin_district_code: str | None = Field(default=None, min_length=6, max_length=6)
-    destination_district_code: str | None = Field(default=None, min_length=6, max_length=6)
+    destination_district_code: str | None = Field(
+        default=None, min_length=6, max_length=6
+    )
     actual_weight_grams: int | None = Field(default=None, gt=0)
     length_cm: int | None = Field(default=None, gt=0)
     width_cm: int | None = Field(default=None, gt=0)
@@ -212,9 +214,7 @@ class DraftService:
         quote = await PricingService(self._session).quote(
             request,
             actor,
-            idempotency_key=(
-                f"agent-draft:{draft.id}:revision:{draft.revision}:quote"
-            ),
+            idempotency_key=(f"agent-draft:{draft.id}:revision:{draft.revision}:quote"),
         )
         # JSONB 原地修改不被 SQLAlchemy 追踪，必须整体替换 payload 才能持久化 quote_id。
         draft.payload = {**draft.payload, "quote_id": str(quote.id)}
@@ -237,15 +237,23 @@ class DraftService:
         delivery = payload.get("delivery_method")
         if pickup is None:
             missing.append("pickup_method")
-        elif pickup == PickupMethod.DOOR_PICKUP.value and not payload.get("sender_address_id"):
+        elif pickup == PickupMethod.DOOR_PICKUP.value and not payload.get(
+            "sender_address_id"
+        ):
             missing.append("sender_address_id")
-        elif pickup == PickupMethod.STATION_DROPOFF.value and not payload.get("origin_station_id"):
+        elif pickup == PickupMethod.STATION_DROPOFF.value and not payload.get(
+            "origin_station_id"
+        ):
             missing.append("origin_station_id")
         if delivery is None:
             missing.append("delivery_method")
-        elif delivery == DeliveryMethod.HOME_DELIVERY.value and not payload.get("receiver_address_id"):
+        elif delivery == DeliveryMethod.HOME_DELIVERY.value and not payload.get(
+            "receiver_address_id"
+        ):
             missing.append("receiver_address_id")
-        elif delivery == DeliveryMethod.STATION_PICKUP.value and not payload.get("destination_station_id"):
+        elif delivery == DeliveryMethod.STATION_PICKUP.value and not payload.get(
+            "destination_station_id"
+        ):
             missing.append("destination_station_id")
         for field in (
             "origin_district_code",
@@ -282,7 +290,11 @@ class DraftService:
             items.append({"label": "预估重量", "value": f"{cast(int, weight)} 克"})
         dims = [
             payload.get(k)
-            for k in ("estimated_length_cm", "estimated_width_cm", "estimated_height_cm")
+            for k in (
+                "estimated_length_cm",
+                "estimated_width_cm",
+                "estimated_height_cm",
+            )
         ]
         if all(v is not None for v in dims):
             items.append(
@@ -292,11 +304,17 @@ class DraftService:
                 }
             )
         if payload.get("package_category"):
-            items.append({"label": "物品类型", "value": str(payload["package_category"])})
+            items.append(
+                {"label": "物品类型", "value": str(payload["package_category"])}
+            )
         if payload.get("package_description"):
-            items.append({"label": "物品内容", "value": str(payload["package_description"])})
+            items.append(
+                {"label": "物品内容", "value": str(payload["package_description"])}
+            )
         if payload.get("special_instructions"):
-            items.append({"label": "特殊备注", "value": str(payload["special_instructions"])})
+            items.append(
+                {"label": "特殊备注", "value": str(payload["special_instructions"])}
+            )
         return items
 
     async def view(self, draft: AgentShipmentDraft, actor: CurrentUser) -> DraftView:
@@ -316,4 +334,10 @@ class DraftService:
 
 def _uuid_value(payload: dict[str, object], key: str) -> UUID | None:
     value = payload.get(key)
-    return UUID(value) if isinstance(value, str) else value if isinstance(value, UUID) else None
+    return (
+        UUID(value)
+        if isinstance(value, str)
+        else value
+        if isinstance(value, UUID)
+        else None
+    )

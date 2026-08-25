@@ -27,24 +27,10 @@ class WorkflowError(StrictContract):
     retryable: bool = False
 
 
-class ShipmentHandoff(StrictContract):
-    """主图只向寄件子图交接用户原话和模型提取的候选字段。"""
-
-    user_message: str = Field(min_length=1, max_length=8000)
-    extracted_fields: dict[str, object] = Field(default_factory=dict)
-
-
 class ShipmentReceipt(StrictContract):
     shipment_id: UUID
     shipment_no: str
     total_cents: int = Field(ge=0)
-
-
-class ShipmentWorkflowResult(StrictContract):
-    status: Literal["NEEDS_INPUT", "AWAITING_CONFIRMATION", "CREATED", "CANCELLED", "FAILED"]
-    response: str
-    receipt: ShipmentReceipt | None = None
-    error: WorkflowError | None = None
 
 
 class KnowledgeSearchInput(StrictContract):
