@@ -4,7 +4,7 @@
 
 ```mermaid
 flowchart LR
-    API[FastAPI] --> RT[AgentRuntime]
+    API[FastAPI] --> RT[AgentGraphRunner]
     RT --> ROOT[7 节点 Assistant Graph]
     ROOT -->|五个只读工具| PORTS[Ports]
     ROOT -->|ShipmentHandoff| CHILD[8 节点 Shipment Graph]

@@ -12,7 +12,7 @@ from uuid import UUID
 
 from langgraph.checkpoint.memory import MemorySaver
 
-from yitu.agent.runtime.runtime import AgentRuntime
+from yitu.agent.runtime.runner import AgentGraphRunner
 from yitu.platform.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -21,7 +21,7 @@ _memory_checkpointer: Any | None = None
 _postgres_pool: Any | None = None
 _postgres_checkpointer: Any | None = None
 _init_lock = asyncio.Lock()
-_compiled_runtime: AgentRuntime | None = None
+_compiled_runner: AgentGraphRunner | None = None
 
 
 def _conn_info_from_settings() -> str:
@@ -67,21 +67,21 @@ async def get_shared_checkpointer() -> Any:
     return _postgres_checkpointer
 
 
-async def get_shared_agent_runtime() -> "AgentRuntime":
+async def get_shared_agent_graph_runner() -> AgentGraphRunner:
     """根图与 checkpointer 进程级复用，请求级身份依赖仅通过 context 注入。"""
-    global _compiled_runtime
-    if _compiled_runtime is not None:
-        return _compiled_runtime
+    global _compiled_runner
+    if _compiled_runner is not None:
+        return _compiled_runner
     checkpointer = await get_shared_checkpointer()
     async with _init_lock:
-        if _compiled_runtime is None:
+        if _compiled_runner is None:
             from yitu.agent.workflows.assistant_graph import build_assistant_graph
             from yitu.agent.workflows.shipment_graph import build_shipment_graph
 
             child = build_shipment_graph()
             graph = build_assistant_graph(child, checkpointer=checkpointer)
-            _compiled_runtime = AgentRuntime(graph)
-    return _compiled_runtime
+            _compiled_runner = AgentGraphRunner(graph)
+    return _compiled_runner
 
 
 async def delete_thread(thread_id: UUID | str) -> None:
@@ -98,8 +98,8 @@ async def delete_thread(thread_id: UUID | str) -> None:
 
 async def dispose_checkpointer() -> None:
     """关闭 PostgreSQL 连接池，供应用或测试生命周期结束时调用。"""
-    global _compiled_runtime, _postgres_pool, _postgres_checkpointer
-    _compiled_runtime = None
+    global _compiled_runner, _postgres_pool, _postgres_checkpointer
+    _compiled_runner = None
     if _postgres_pool is not None:
         await _postgres_pool.close()
         _postgres_pool = None
@@ -109,7 +109,7 @@ async def dispose_checkpointer() -> None:
 
 async def _reset_for_tests() -> None:
     """重置模块级缓存并关闭遗留连接池，保证测试之间互不污染（仅测试使用）。"""
-    global _compiled_runtime, _memory_checkpointer, _postgres_pool, _postgres_checkpointer
+    global _compiled_runner, _memory_checkpointer, _postgres_pool, _postgres_checkpointer
     if _postgres_pool is not None:
         try:
             await _postgres_pool.close()
@@ -118,4 +118,4 @@ async def _reset_for_tests() -> None:
     _postgres_pool = None
     _postgres_checkpointer = None
     _memory_checkpointer = None
-    _compiled_runtime = None
+    _compiled_runner = None

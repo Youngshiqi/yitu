@@ -12,7 +12,7 @@ from yitu.addresses.service import assign_region_path, find_matching_address
 from yitu.agent.checkpoint_store import delete_thread
 from yitu.agent.drafts import DraftPatch, DraftService, DraftView
 from yitu.agent.models import AgentActionGrant, AgentConversation, AgentMessage
-from yitu.agent.runtime import AgentRuntime, AgentRuntimeContext, PublicAgentEvent
+from yitu.agent.runtime import AgentGraphRunner, AgentRuntimeContext, PublicAgentEvent
 from yitu.agent.schemas import AgentTurnView, DraftAddressCreate
 from yitu.identity.service import CurrentUser
 from yitu.platform.audit import AuditService
@@ -23,11 +23,11 @@ from yitu.shipments.service import ShipmentView
 
 
 class AgentConversationService:
-    """只维护兼容 API；模型、工具和流程控制全部属于 AgentRuntime。"""
+    """只维护兼容 API；模型、工具和流程控制全部属于 AgentGraphRunner。"""
 
-    def __init__(self, session: AsyncSession, runtime: AgentRuntime | None = None) -> None:
+    def __init__(self, session: AsyncSession, runner: AgentGraphRunner | None = None) -> None:
         self._session = session
-        self._runtime = runtime
+        self._runner = runner
 
     async def create(self, actor: CurrentUser, *, title: str | None = None) -> AgentConversation:
         now = Clock.now()
@@ -58,10 +58,10 @@ class AgentConversationService:
         return list(rows.all())
 
     async def send_message(self, conversation_id: UUID, content: str, context: AgentRuntimeContext) -> AgentTurnView:
-        return await self._require_runtime().invoke_message(conversation_id, content, context)
+        return await self._require_runner().invoke_message(conversation_id, content, context)
 
     def stream_message(self, conversation_id: UUID, content: str, context: AgentRuntimeContext) -> AsyncIterator[PublicAgentEvent]:
-        return self._require_runtime().stream_message(conversation_id, content, context)
+        return self._require_runner().stream_message(conversation_id, content, context)
 
     async def save_draft_address(self, conversation_id: UUID, actor: CurrentUser, payload: DraftAddressCreate) -> DraftView:
         await self.get_owned(conversation_id, actor)
@@ -125,7 +125,7 @@ class AgentConversationService:
         await self._session.flush()
         await delete_thread(conversation_id)
 
-    def _require_runtime(self) -> AgentRuntime:
-        if self._runtime is None:
-            raise RuntimeError("AgentRuntime 未注入")
-        return self._runtime
+    def _require_runner(self) -> AgentGraphRunner:
+        if self._runner is None:
+            raise RuntimeError("AgentGraphRunner 未注入")
+        return self._runner

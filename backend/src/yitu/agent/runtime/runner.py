@@ -1,4 +1,4 @@
-"""统一执行、流式输出和人工确认恢复的 LangGraph Runtime。"""
+"""统一执行、流式输出和人工确认恢复的 LangGraph Runner。"""
 
 from collections.abc import AsyncIterator
 from typing import Any
@@ -21,8 +21,8 @@ _CONFIRM_WORDS = {"确认", "确认寄件", "确认下单", "同意", "confirm"}
 _CANCEL_WORDS = {"取消", "取消寄件", "不要了", "cancel"}
 
 
-class AgentRuntime:
-    """流式和非流式入口共享同一次图执行，不保留旁路编排。"""
+class AgentGraphRunner:
+    """驱动已编译图，并把执行事件映射到稳定的 API 契约。"""
 
     def __init__(self, graph: Any, mapper: AgentEventMapper | None = None) -> None:
         self._graph = graph

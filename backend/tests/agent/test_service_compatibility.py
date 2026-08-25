@@ -1,4 +1,4 @@
-"""service.py 只转发 Runtime 公开事件，不再拥有编排分支。"""
+"""service.py 只转发 Graph Runner 公开事件，不再拥有编排分支。"""
 
 from collections.abc import AsyncIterator
 from typing import Any
@@ -7,7 +7,7 @@ from uuid import uuid4
 from yitu.agent.service import AgentConversationService
 
 
-class FakeRuntime:
+class FakeGraphRunner:
     async def stream_message(
         self, conversation_id: Any, content: str, context: Any
     ) -> AsyncIterator[tuple[str, dict[str, object]]]:
@@ -17,10 +17,10 @@ class FakeRuntime:
         yield "done", {"role": "assistant"}
 
 
-async def test_service_stream_forwards_runtime_public_events() -> None:
+async def test_service_stream_forwards_graph_runner_public_events() -> None:
     service = AgentConversationService(
         object(),  # type: ignore[arg-type]
-        runtime=FakeRuntime(),  # type: ignore[arg-type]
+        runner=FakeGraphRunner(),  # type: ignore[arg-type]
     )
 
     events = [

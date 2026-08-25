@@ -7,13 +7,13 @@ from fastapi import APIRouter, Depends, Header, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yitu.agent.checkpoint_store import get_shared_agent_runtime
+from yitu.agent.checkpoint_store import get_shared_agent_graph_runner
 from yitu.agent.drafts import DraftPatch, DraftService, DraftValidationView, DraftView
 from yitu.agent.grants import GrantService, GrantView
 from yitu.agent.memory import MemoryCreate, MemoryService, MemoryView
 from yitu.agent.model_adapter import ModelAdapter, get_model_adapter
 from yitu.agent.models import AgentConversation, AgentMessage
-from yitu.agent.runtime import AgentRuntime
+from yitu.agent.runtime import AgentGraphRunner
 from yitu.agent.runtime.context import build_runtime_context
 from yitu.agent.schemas import (
     AgentTurnView,
@@ -35,15 +35,15 @@ from yitu.platform.database import get_session
 from yitu.shipments.service import ShipmentView
 
 
-async def get_agent_runtime() -> AgentRuntime:
-    return await get_shared_agent_runtime()
+async def get_agent_graph_runner() -> AgentGraphRunner:
+    return await get_shared_agent_graph_runner()
 
 
 router = APIRouter(prefix="/api/v1/agent/conversations", tags=["agent"])
 _session = Depends(get_session)
 _current_user = Depends(get_current_user)
 _model = Depends(get_model_adapter)
-_runtime = Depends(get_agent_runtime)
+_runner = Depends(get_agent_graph_runner)
 _last_event_id = Header(default=None, alias="Last-Event-ID")
 
 
@@ -151,10 +151,10 @@ async def issue_grant(conversation_id: UUID, user: CurrentUser = _current_user, 
 
 
 @router.post("/{conversation_id}/messages", response_model=AgentTurnView)
-async def send_message(conversation_id: UUID, body: MessageCreate, request: Request, user: CurrentUser = _current_user, session: AsyncSession = _session, model: ModelAdapter = _model, runtime: AgentRuntime = _runtime) -> AgentTurnView:
+async def send_message(conversation_id: UUID, body: MessageCreate, request: Request, user: CurrentUser = _current_user, session: AsyncSession = _session, model: ModelAdapter = _model, runner: AgentGraphRunner = _runner) -> AgentTurnView:
     await AgentConversationService(session).get_owned(conversation_id, user)
     context = build_runtime_context(session=session, actor=user, model=model, request_id=request.state.request_id)
-    result = await AgentConversationService(session, runtime).send_message(conversation_id, body.content, context)
+    result = await AgentConversationService(session, runner).send_message(conversation_id, body.content, context)
     await session.commit()
     return result
 
@@ -167,10 +167,10 @@ async def stream_message(
     user: CurrentUser = _current_user,
     session: AsyncSession = _session,
     model: ModelAdapter = _model,
-    runtime: AgentRuntime = _runtime,
+    runner: AgentGraphRunner = _runner,
 ) -> StreamingResponse:
     """通过单个鉴权请求实时返回用户消息确认和助手增量文本。"""
-    service = AgentConversationService(session, runtime)
+    service = AgentConversationService(session, runner)
     await service.get_owned(conversation_id, user)
     context = build_runtime_context(session=session, actor=user, model=model, request_id=request.state.request_id)
 

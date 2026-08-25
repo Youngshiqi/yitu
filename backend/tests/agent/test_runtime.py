@@ -1,4 +1,4 @@
-"""Agent Runtime 公开事件和单执行路径测试。"""
+"""Agent Graph Runner 公开事件和单执行路径测试。"""
 
 from uuid import uuid4
 
@@ -15,7 +15,7 @@ from yitu.agent.runtime.event_mapper import (
     UserMessageStored,
     WorkflowFailed,
 )
-from yitu.agent.runtime.runtime import AgentRuntime
+from yitu.agent.runtime.runner import AgentGraphRunner
 from yitu.agent.workflow_state import (
     ConfirmationSnapshot,
     DraftProgress,
@@ -55,25 +55,25 @@ def test_only_public_lifecycle_events_are_exposed() -> None:
     assert mapper.map(NodeCompleted(node="assistant_tools_node")) is None
 
 
-async def test_runtime_streams_real_graph_through_one_public_event_path() -> None:
+async def test_graph_runner_streams_real_graph_through_one_public_event_path() -> None:
     model = ScriptedModelPort(
         [ToolCallResult(content="可以，我来帮你。", tool_calls=())]
     )
     context = _context(model)
-    runtime = AgentRuntime(
+    runner = AgentGraphRunner(
         build_assistant_graph(_empty_shipment_graph(), checkpointer=MemorySaver())
     )
 
     events = [
         event
-        async for event in runtime.stream_message(uuid4(), "你好", context)
+        async for event in runner.stream_message(uuid4(), "你好", context)
     ]
 
     assert [name for name, _ in events] == ["user_message", "delta", "done"]
     assert events[1] == ("delta", {"content": "可以，我来帮你。"})
 
 
-async def test_runtime_exposes_confirmation_then_resumes_same_thread() -> None:
+async def test_graph_runner_exposes_confirmation_then_resumes_same_thread() -> None:
     conversation_id = uuid4()
     quote_id = uuid4()
     model = ScriptedModelPort([
@@ -91,10 +91,10 @@ async def test_runtime_exposes_confirmation_then_resumes_same_thread() -> None:
     )
     context = _context(model)
     object.__setattr__(context, "shipment", shipment)
-    runtime = AgentRuntime(build_assistant_graph(build_shipment_graph(), checkpointer=MemorySaver()))
+    runner = AgentGraphRunner(build_assistant_graph(build_shipment_graph(), checkpointer=MemorySaver()))
 
-    first = [event async for event in runtime.stream_message(conversation_id, "寄文件", context)]
-    second = [event async for event in runtime.stream_message(conversation_id, "确认", context)]
+    first = [event async for event in runner.stream_message(conversation_id, "寄文件", context)]
+    second = [event async for event in runner.stream_message(conversation_id, "确认", context)]
 
     assert first[-1][0] == "done"
     assert second[-1][0] == "done"
