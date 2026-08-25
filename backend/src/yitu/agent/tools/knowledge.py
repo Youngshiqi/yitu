@@ -4,7 +4,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from yitu.agent.rag_enhancements import build_rag_enhancements
+from yitu.agent.infrastructure.rag_enhancements import build_rag_enhancements
 from yitu.agent.tools.base import ToolContext, ToolResult
 from yitu.knowledge.retrieval import KnowledgeRetriever
 

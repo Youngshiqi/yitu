@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yitu.addresses.service import address_response, get_owned_address
-from yitu.agent.models import AgentShipmentDraft
+from yitu.agent.domain.models import AgentShipmentDraft
 from yitu.identity.service import CurrentUser
 from yitu.platform.clock import Clock
 from yitu.platform.errors import AppError

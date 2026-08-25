@@ -7,16 +7,7 @@ from fastapi import APIRouter, Depends, Header, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yitu.agent.api_service import AgentConversationService
-from yitu.agent.checkpoint_store import get_shared_agent_graph_runner
-from yitu.agent.drafts import DraftPatch, DraftService, DraftValidationView, DraftView
-from yitu.agent.grants import GrantService, GrantView
-from yitu.agent.memory import MemoryCreate, MemoryService, MemoryView
-from yitu.agent.model_adapter import ModelAdapter, get_model_adapter
-from yitu.agent.models import AgentConversation, AgentMessage
-from yitu.agent.runtime import AgentGraphRunner
-from yitu.agent.runtime.graph_context import build_runtime_context
-from yitu.agent.schemas import (
+from yitu.agent.api.schemas import (
     AgentTurnView,
     ConversationCreate,
     ConversationView,
@@ -24,12 +15,26 @@ from yitu.agent.schemas import (
     MessageCreate,
     MessageView,
 )
-from yitu.agent.sse import (
+from yitu.agent.api.service import AgentConversationService
+from yitu.agent.api.sse import (
     agent_message_events,
     encode_agent_event,
     validate_agent_cursor,
 )
-from yitu.agent.write_tools import AgentWriteService
+from yitu.agent.domain.drafts import (
+    DraftPatch,
+    DraftService,
+    DraftValidationView,
+    DraftView,
+)
+from yitu.agent.domain.grants import GrantService, GrantView
+from yitu.agent.domain.memory import MemoryCreate, MemoryService, MemoryView
+from yitu.agent.domain.models import AgentConversation, AgentMessage
+from yitu.agent.domain.shipment_write_service import AgentWriteService
+from yitu.agent.infrastructure.checkpoint_store import get_shared_agent_graph_runner
+from yitu.agent.infrastructure.model_adapter import ModelAdapter, get_model_adapter
+from yitu.agent.runtime import AgentGraphRunner
+from yitu.agent.runtime.graph_context import build_runtime_context
 from yitu.identity.service import CurrentUser, get_current_user
 from yitu.platform.database import get_session
 from yitu.shipments.service import ShipmentView

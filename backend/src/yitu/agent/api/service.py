@@ -9,11 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from yitu.addresses.models import Address
 from yitu.addresses.service import assign_region_path, find_matching_address
-from yitu.agent.checkpoint_store import delete_thread
-from yitu.agent.drafts import DraftPatch, DraftService, DraftView
-from yitu.agent.models import AgentActionGrant, AgentConversation, AgentMessage
+from yitu.agent.api.schemas import AgentTurnView, DraftAddressCreate
+from yitu.agent.domain.drafts import DraftPatch, DraftService, DraftView
+from yitu.agent.domain.models import AgentActionGrant, AgentConversation, AgentMessage
+from yitu.agent.infrastructure.checkpoint_store import delete_thread
 from yitu.agent.runtime import AgentGraphRunner, AgentRuntimeContext, PublicAgentEvent
-from yitu.agent.schemas import AgentTurnView, DraftAddressCreate
 from yitu.identity.service import CurrentUser
 from yitu.platform.audit import AuditService
 from yitu.platform.clock import Clock

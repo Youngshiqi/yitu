@@ -6,6 +6,7 @@ from uuid import UUID
 
 from langgraph.types import Command
 
+from yitu.agent.api.schemas import AgentTurnView, MessageView
 from yitu.agent.runtime.event_mapper import (
     AgentEventMapper,
     AssistantMessageStored,
@@ -15,7 +16,6 @@ from yitu.agent.runtime.event_mapper import (
     WorkflowFailed,
 )
 from yitu.agent.runtime.graph_context import AgentRuntimeContext
-from yitu.agent.schemas import AgentTurnView, MessageView
 
 _CONFIRM_WORDS = {"确认", "确认寄件", "确认下单", "同意", "confirm"}
 _CANCEL_WORDS = {"取消", "取消寄件", "不要了", "cancel"}

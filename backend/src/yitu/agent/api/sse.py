@@ -7,8 +7,8 @@ from uuid import UUID
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yitu.agent.models import AgentMessage
-from yitu.agent.schemas import MessageView
+from yitu.agent.api.schemas import MessageView
+from yitu.agent.domain.models import AgentMessage
 from yitu.platform.errors import AppError
 
 

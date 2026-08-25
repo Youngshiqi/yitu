@@ -5,8 +5,8 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yitu.agent.models import AgentConversation, AgentMessage
-from yitu.agent.schemas import MessageView
+from yitu.agent.api.schemas import MessageView
+from yitu.agent.domain.models import AgentConversation, AgentMessage
 from yitu.platform.clock import Clock
 from yitu.platform.errors import AppError
 

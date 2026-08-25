@@ -7,8 +7,8 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yitu.agent.drafts import DraftService
-from yitu.agent.models import AgentActionGrant, AgentShipmentDraft
+from yitu.agent.domain.drafts import DraftService
+from yitu.agent.domain.models import AgentActionGrant, AgentShipmentDraft
 from yitu.identity.service import CurrentUser, require_resource_owner
 from yitu.platform.audit import AuditService
 from yitu.platform.clock import Clock

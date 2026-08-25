@@ -4,7 +4,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yitu.agent.grants import GrantService
+from yitu.agent.domain.grants import GrantService
 from yitu.identity.service import CurrentUser
 from yitu.shipments.service import ShipmentApplicationService, ShipmentView
 

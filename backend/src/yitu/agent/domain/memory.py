@@ -13,8 +13,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from yitu.agent.models import AgentMemory
-from yitu.agent.privacy import contains_forbidden_memory, redact_text
+from yitu.agent.domain.models import AgentMemory
+from yitu.agent.infrastructure.privacy import contains_forbidden_memory, redact_text
 from yitu.identity.service import CurrentUser
 from yitu.platform.clock import Clock
 from yitu.platform.errors import AppError

@@ -11,10 +11,10 @@ from yitu.agent.capabilities import (
     KnowledgeSearchService,
     ShipmentConversationService,
 )
-from yitu.agent.model_adapter import ModelAdapter
+from yitu.agent.infrastructure.model_adapter import ModelAdapter
+from yitu.agent.infrastructure.tracing import AgentTrace
 from yitu.agent.tools.base import ToolContext
 from yitu.agent.tools.knowledge import KnowledgeSearchTool
-from yitu.agent.tracing import AgentTrace
 from yitu.identity.service import CurrentUser
 
 

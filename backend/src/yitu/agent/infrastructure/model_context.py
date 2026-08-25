@@ -2,8 +2,8 @@
 
 from collections.abc import Sequence
 
-from yitu.agent.model_adapter import ModelMessage
-from yitu.agent.privacy import redact_text
+from yitu.agent.infrastructure.model_adapter import ModelMessage
+from yitu.agent.infrastructure.privacy import redact_text
 from yitu.agent.prompts import SYSTEM_PROMPT
 
 _MAX_TOOL_RESULT = 8000

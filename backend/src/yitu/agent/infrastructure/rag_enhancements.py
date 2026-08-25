@@ -9,7 +9,7 @@ import re
 from collections.abc import Sequence
 from functools import lru_cache
 
-from yitu.agent.model_adapter import (
+from yitu.agent.infrastructure.model_adapter import (
     ModelAdapter,
     ModelMessage,
     ModelUnavailableError,

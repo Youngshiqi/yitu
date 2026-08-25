@@ -5,8 +5,9 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from yitu.addresses.service import list_addresses
-from yitu.agent.drafts import DraftService
-from yitu.agent.grants import GrantService
+from yitu.agent.domain.drafts import DraftService
+from yitu.agent.domain.grants import GrantService
+from yitu.agent.domain.shipment_write_service import AgentWriteService
 from yitu.agent.tools.drafts import execute_update_draft
 from yitu.agent.workflow.state import (
     ConfirmationSnapshot,
@@ -14,7 +15,6 @@ from yitu.agent.workflow.state import (
     QuoteProgress,
     ShipmentReceipt,
 )
-from yitu.agent.write_tools import AgentWriteService
 from yitu.identity.service import CurrentUser
 from yitu.platform.errors import AppError
 from yitu.pricing.models import QuoteSnapshot

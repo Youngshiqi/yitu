@@ -5,7 +5,7 @@ import json
 from langgraph.runtime import Runtime
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from yitu.agent.model_adapter import ModelMessage, ToolCall
+from yitu.agent.infrastructure.model_adapter import ModelMessage, ToolCall
 from yitu.agent.prompts import BUDGET_REFUSAL, SYSTEM_PROMPT
 from yitu.agent.runtime.graph_context import AgentRuntimeContext
 from yitu.agent.tools.registry import ASSISTANT_TOOL_SPECS

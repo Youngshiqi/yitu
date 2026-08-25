@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from yitu.addresses.models import Address
 from yitu.addresses.service import assign_region_path, find_matching_address
-from yitu.agent.drafts import DraftPatch, DraftService, DraftView
+from yitu.agent.domain.drafts import DraftPatch, DraftService, DraftView
 from yitu.identity.service import CurrentUser
 from yitu.regions.service import resolve_region_by_names
 
