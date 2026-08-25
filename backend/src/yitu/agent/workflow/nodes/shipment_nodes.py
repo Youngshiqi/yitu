@@ -95,33 +95,6 @@ async def create_shipment_node(
     }
 
 
-def shipment_progress_route(state: AssistantState) -> str:
-    if state.get("error"):
-        return "handle_failure_node"
-    progress = state.get("shipment_progress", {})
-    return (
-        "finalize_turn_node" if progress.get("missing_fields") else "create_quote_node"
-    )
-
-
-def quote_route(state: AssistantState) -> str:
-    return "handle_failure_node" if state.get("error") else "shipment_confirmation_node"
-
-
-def confirmation_route(state: AssistantState) -> str:
-    if state.get("error"):
-        return "handle_failure_node"
-    return (
-        "create_shipment_node"
-        if state.get("shipment_candidate_fields", {}).get("_confirmed")
-        else "finalize_turn_node"
-    )
-
-
-def creation_route(state: AssistantState) -> str:
-    return "handle_failure_node" if state.get("error") else "finalize_turn_node"
-
-
 def _app_error(error: AppError, source_node: str) -> AssistantState:
     return {
         "error": WorkflowError(

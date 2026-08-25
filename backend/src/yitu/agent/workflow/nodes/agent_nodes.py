@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from yitu.agent.model_adapter import ModelMessage, ToolCall
 from yitu.agent.prompts import BUDGET_REFUSAL, SYSTEM_PROMPT
 from yitu.agent.runtime.graph_context import AgentRuntimeContext
-from yitu.agent.tools.shipments import ShipmentReadInput
+from yitu.agent.tools.registry import ASSISTANT_TOOL_SPECS
 from yitu.agent.workflow.state import (
     AssistantState,
     AssistantToolCall,
@@ -22,50 +22,6 @@ class _StartShipmentArguments(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     extracted_fields: dict[str, object] = Field(default_factory=dict)
-
-
-def _function_tool(
-    name: str, description: str, parameters: dict[str, object]
-) -> dict[str, object]:
-    return {
-        "type": "function",
-        "function": {
-            "name": name,
-            "description": description,
-            "parameters": parameters,
-        },
-    }
-
-
-_EMPTY_PARAMETERS: dict[str, object] = {
-    "type": "object",
-    "properties": {},
-    "additionalProperties": False,
-}
-ASSISTANT_TOOL_SPECS: tuple[dict[str, object], ...] = (
-    _function_tool(
-        "search_knowledge",
-        "检索已发布且当前生效的物流规则证据。",
-        KnowledgeSearchInput.model_json_schema(),
-    ),
-    _function_tool(
-        "get_own_shipment",
-        "读取当前登录客户有权访问的运单、轨迹、费用和时效。",
-        ShipmentReadInput.model_json_schema(),
-    ),
-    _function_tool(
-        "list_addresses", "读取当前客户的最小化地址选项。", _EMPTY_PARAMETERS
-    ),
-    _function_tool("get_current_identity", "读取当前登录身份摘要。", _EMPTY_PARAMETERS),
-    _function_tool(
-        "get_pricing_rules", "读取当前生效的确定性运费规则。", _EMPTY_PARAMETERS
-    ),
-    _function_tool(
-        "start_shipment",
-        "用户要新建或继续寄件时，把已明确的草稿候选字段交给寄件工作流。",
-        _StartShipmentArguments.model_json_schema(),
-    ),
-)
 
 
 async def assistant_agent_node(
@@ -187,20 +143,6 @@ async def assistant_tools_node(
         "pending_tool_calls": [],
         "tool_call_count": current_count + len(raw_calls),
     }
-
-
-def assistant_action_route(state: AssistantState) -> str:
-    if state.get("error"):
-        return "handle_failure_node"
-    if state.get("shipment_requested"):
-        return "shipment_process_node"
-    if state.get("pending_tool_calls"):
-        return "assistant_tools_node"
-    return "finalize_turn_node"
-
-
-def assistant_tools_route(state: AssistantState) -> str:
-    return "handle_failure_node" if state.get("error") else "assistant_agent_node"
 
 
 def _model_messages(messages: list[dict[str, object]]) -> list[ModelMessage]:

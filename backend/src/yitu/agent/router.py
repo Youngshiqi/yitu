@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, Header, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from yitu.agent.api_service import AgentConversationService
 from yitu.agent.checkpoint_store import get_shared_agent_graph_runner
 from yitu.agent.drafts import DraftPatch, DraftService, DraftValidationView, DraftView
 from yitu.agent.grants import GrantService, GrantView
@@ -23,7 +24,6 @@ from yitu.agent.schemas import (
     MessageCreate,
     MessageView,
 )
-from yitu.agent.service import AgentConversationService
 from yitu.agent.sse import (
     agent_message_events,
     encode_agent_event,

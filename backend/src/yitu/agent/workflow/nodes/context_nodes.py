@@ -92,7 +92,3 @@ def security_gate_node(
         return {}
     runtime.context.trace.record("security.blocked", code=error.code)
     return {"error": error.model_dump(mode="json")}
-
-
-def security_result_route(state: AssistantState) -> str:
-    return "handle_failure_node" if state.get("error") else "assistant_agent_node"
