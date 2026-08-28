@@ -146,6 +146,7 @@ yitu/
 
 | 文档 | 内容 |
 |------|------|
+| [**架构深度解析（技术博客）**](docs/architecture-deep-dive.md) | 单图编排、interrupt + 授权令牌双保险、确定性边界、RAG 全链路的源码级讲解 |
 | [技术亮点](docs/technical-highlights.md) | 核心技术卖点与工程决策梳理 |
 | [LangGraph 流程](docs/langgraph-flow.md) | 单张 Agent 状态图的 10 个节点、条件边与中断恢复 |
 | [RAG 架构](docs/agent-rag-architecture.md) / [知识库 RAG](docs/knowledge-rag.md) | 双路混合检索、重排、评测设计 |
