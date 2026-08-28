@@ -57,8 +57,6 @@ async def load_context_node(
     # 的路由标记和交易中间数据，不能因为陈旧值再次进入寄件或建单节点。
     return {
         "messages": messages,
-        "turn_count": 0,
-        "tool_call_count": 0,
         "pending_tool_calls": [],
         "shipment_requested": False,
         "shipment_candidate_fields": {},

@@ -1,4 +1,4 @@
-"""单主图装配：通用 ReAct 与受控寄件事务共享同一张图。"""
+"""单主图装配：单轮 Agent 与受控寄件事务共享同一张图。"""
 
 from typing import Any
 
@@ -43,7 +43,7 @@ def build_assistant_graph(
     AssistantState, AgentRuntimeContext, AssistantState, AssistantState
 ]:
     """构建唯一的助手主图，所有寄件流转都由本图条件边决定。"""
-    graph = StateGraph(AssistantState, context_schema=AgentRuntimeContext)
+    graph = StateGraph[AssistantState, AgentRuntimeContext, AssistantState, AssistantState](AssistantState, context_schema=AgentRuntimeContext)
     graph.add_node("load_context_node", load_context_node)
     graph.add_node("security_gate_node", security_gate_node)
     graph.add_node("assistant_agent_node", assistant_agent_node)

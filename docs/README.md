@@ -18,6 +18,7 @@
 
 ## AI 架构与面试
 
+- [技术亮点](technical-highlights.md)
 - [单图 LangGraph 流程](langgraph-flow.md)
 - [Agent 与 RAG 架构](agent-rag-architecture.md)
 - [面试口述材料](interview-script.md)

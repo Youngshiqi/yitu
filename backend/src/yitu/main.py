@@ -15,7 +15,7 @@ from pydantic import BaseModel
 from starlette.middleware.base import RequestResponseEndpoint
 
 from yitu.addresses.router import router as addresses_router
-from yitu.agent.router import router as agent_router
+from yitu.agent.api.router import router as agent_router
 from yitu.dispatch.router import router as dispatch_router
 from yitu.exceptions.router import router as exceptions_router
 from yitu.identity.router import router as identity_router
@@ -66,7 +66,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
-        from yitu.agent.checkpoint_store import dispose_checkpointer
+        from yitu.agent.infrastructure.checkpoint_store import dispose_checkpointer
 
         await dispose_checkpointer()
         await dispose_database()
@@ -134,3 +134,4 @@ def create_app() -> FastAPI:
         return ReadinessResponse(status="ready")
 
     return app
+

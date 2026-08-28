@@ -31,6 +31,10 @@ class Settings(BaseSettings):
     embedding_api_key: str | None = None
     embedding_model: str = "qwen3.7-text-embedding"
     embedding_dimension: int | None = None
+    rerank_provider: str = "local"
+    rerank_base_url: str | None = None
+    rerank_api_key: str | None = None
+    rerank_model: str = "gte-rerank"
     mineru_base_url: str = "https://mineru.net"
     mineru_token: str | None = None
     mineru_model_version: str = "vlm"

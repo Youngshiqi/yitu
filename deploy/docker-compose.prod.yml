@@ -1,0 +1,112 @@
+# 生产部署编排文件。
+# 使用方式：
+#   1. 复制 deploy/.env.production.example 为 deploy/.env.production，填入真实密钥；
+#   2. 在项目根目录执行：
+#        docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env.production up -d --build
+#
+# 与本地 compose.yaml 的差异：
+#   - 不启动 MinIO（生产对象存储用腾讯云 COS / S3）；
+#   - PostgreSQL、Redis 不映射宿主机端口，仅容器内网可达；
+#   - 全部服务 restart 策略为 unless-stopped；
+#   - 新增 frontend（Nginx）统一对外 80 端口，反代 API 与 SSE；
+#   - 关闭 demo 演示模式与固定取件码，强制独立 JWT 密钥与取件码 pepper。
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    # 生产环境不暴露数据库端口到宿主机
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    # 生产环境不暴露 Redis 端口到宿主机
+
+  api:
+    build:
+      context: ../backend
+    restart: unless-stopped
+    env_file: .env.production
+    environment:
+      # 生产强制项，避免误带 demo 配置
+      YITU_APP_PROFILE: production
+      YITU_AGENT_CHECKPOINTER_BACKEND: postgres
+      YITU_KNOWLEDGE_STORAGE_BACKEND: s3
+    command: >-
+      sh -c ".venv/bin/alembic upgrade head &&
+      .venv/bin/uvicorn yitu.main:create_app --factory
+      --host 0.0.0.0 --port 8000 --workers 2"
+    volumes:
+      - knowledge_data:/app/var/knowledge
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health', timeout=2)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  worker:
+    build:
+      context: ../backend
+    restart: unless-stopped
+    hostname: yitu-worker
+    env_file: .env.production
+    environment:
+      YITU_APP_PROFILE: production
+      YITU_KNOWLEDGE_STORAGE_BACKEND: s3
+    command: >-
+      .venv/bin/celery -A yitu.worker:celery_app worker
+      --loglevel=INFO --hostname=worker@%h --beat
+    volumes:
+      - knowledge_data:/app/var/knowledge
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        ["CMD-SHELL", ".venv/bin/celery -A yitu.worker:celery_app inspect ping --destination worker@yitu-worker --timeout 3"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: deploy/frontend.Dockerfile
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  redis_data:
+  knowledge_data:

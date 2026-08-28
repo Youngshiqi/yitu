@@ -31,7 +31,6 @@ class AgentRuntimeContext:
     conversation_service: ConversationMessageService
     trace: AgentTrace
     history_limit: int = 20
-    max_agent_turns: int = 8
     max_tool_calls: int = 4
 
 

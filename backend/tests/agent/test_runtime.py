@@ -6,7 +6,7 @@ from langgraph.checkpoint.memory import MemorySaver
 
 from tests.agent.fakes import FakeShipmentConversationService, ScriptedModel
 from tests.agent.test_assistant_graph import _context
-from yitu.agent.model_adapter import ToolCall, ToolCallResult
+from yitu.agent.infrastructure.model_adapter import ToolCall, ToolCallResult
 from yitu.agent.runtime.event_mapper import (
     AgentEventMapper,
     AssistantMessageStored,

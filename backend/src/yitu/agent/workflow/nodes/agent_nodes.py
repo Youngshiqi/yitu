@@ -1,4 +1,4 @@
-"""主助手的受限 ReAct Agent 与白名单工具节点。"""
+"""主助手的单轮 Agent 与白名单工具节点。"""
 
 import json
 
@@ -28,9 +28,6 @@ async def assistant_agent_node(
     state: AssistantState,
     runtime: Runtime[AgentRuntimeContext],
 ) -> AssistantState:
-    turn_count = state.get("turn_count", 0)
-    if turn_count >= runtime.context.max_agent_turns:
-        return _budget_error("assistant_agent_node")
     result = None
     messages = _model_messages(state.get("messages", []))
     async for event in runtime.context.model.stream_with_tools(
@@ -56,10 +53,8 @@ async def assistant_agent_node(
             _tool_call_dict(call) for call in result.tool_calls
         ]
     updated_messages.append(assistant_message)
-    update: AssistantState = {
-        "messages": updated_messages,
-        "turn_count": turn_count + 1,
-    }
+    update: AssistantState = {"messages": updated_messages}
+
     shipment_calls = [
         call for call in result.tool_calls if call.name == "start_shipment"
     ]
@@ -78,8 +73,6 @@ async def assistant_agent_node(
                 "开始寄件参数无效",
                 "assistant_agent_node",
             )
-        # `start_shipment` 只是主 Agent 到确定性寄件节点的交接标记，
-        # 不是可执行写工具，也不再构造寄件子图状态。
         update["shipment_requested"] = True
         update["shipment_candidate_fields"] = args.extracted_fields
     elif result.tool_calls:
@@ -99,8 +92,7 @@ async def assistant_tools_node(
     runtime: Runtime[AgentRuntimeContext],
 ) -> AssistantState:
     raw_calls = state.get("pending_tool_calls", [])
-    current_count = state.get("tool_call_count", 0)
-    if current_count + len(raw_calls) > runtime.context.max_tool_calls:
+    if len(raw_calls) > runtime.context.max_tool_calls:
         return _budget_error("assistant_tools_node")
     messages = list(state.get("messages", []))
     try:
@@ -138,10 +130,25 @@ async def assistant_tools_node(
             "模型请求了无效或未授权的工具参数",
             "assistant_tools_node",
         )
+
+    # 工具执行完毕后，调用 LLM 基于工具结果生成最终回复（不再回边）
+    model_messages = _model_messages(messages)
+    response_parts: list[str] = []
+    async for chunk in runtime.context.model.stream(
+        [ModelMessage(role="system", content=SYSTEM_PROMPT), *model_messages]
+    ):
+        if chunk:
+            runtime.stream_writer({"type": "token", "content": chunk})
+            response_parts.append(chunk)
+    response = "".join(response_parts).strip()
+    if not response:
+        response = "抱歉，我暂时无法完成这次请求。"
+    messages.append({"role": "assistant", "content": response})
+
     return {
         "messages": messages,
         "pending_tool_calls": [],
-        "tool_call_count": current_count + len(raw_calls),
+        "response": response,
     }
 
 

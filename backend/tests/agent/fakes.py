@@ -3,7 +3,7 @@
 from collections.abc import AsyncIterator, Sequence
 from uuid import UUID
 
-from yitu.agent.model_adapter import (
+from yitu.agent.infrastructure.model_adapter import (
     ModelMessage,
     ToolCallResult,
     ToolStreamEvent,
@@ -22,8 +22,14 @@ from yitu.agent.workflow.contracts import (
 
 
 class ScriptedModel:
-    def __init__(self, responses: Sequence[ToolCallResult]) -> None:
+    def __init__(
+        self,
+        responses: Sequence[ToolCallResult],
+        *,
+        stream_responses: Sequence[str] = (),
+    ) -> None:
         self._responses = list(responses)
+        self._stream_responses = list(stream_responses)
         self.requests: list[list[ModelMessage]] = []
 
     async def stream_with_tools(
@@ -37,6 +43,13 @@ class ScriptedModel:
         if response.content:
             yield ToolStreamEvent(delta=response.content)
         yield ToolStreamEvent(result=response)
+
+    async def stream(
+        self, messages: Sequence[ModelMessage]
+    ) -> AsyncIterator[str]:
+        self.requests.append(list(messages))
+        if self._stream_responses:
+            yield self._stream_responses.pop(0)
 
 
 class FakeKnowledgeSearchService:

@@ -48,6 +48,6 @@ def test_assistant_tool_call_rejects_identity_in_model_arguments() -> None:
     with pytest.raises(ValidationError, match="user_id"):
         AssistantToolCall(
             id="call-1",
-            name="get_current_identity",
+            name="get_own_shipment",
             arguments={"user_id": str(uuid4())},
         )

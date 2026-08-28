@@ -21,7 +21,7 @@ def assistant_action_route(state: AssistantState) -> str:
 
 
 def assistant_tools_route(state: AssistantState) -> str:
-    return "handle_failure_node" if state.get("error") else "assistant_agent_node"
+    return "handle_failure_node" if state.get("error") else "finalize_turn_node"
 
 
 def shipment_progress_route(state: AssistantState) -> str:

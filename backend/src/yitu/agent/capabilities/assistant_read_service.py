@@ -5,7 +5,7 @@ from uuid import UUID
 from pydantic import BaseModel
 
 from yitu.agent.tools.base import ToolContext, ToolResult
-from yitu.agent.tools.identity import AddressBookTool, IdentityTool
+from yitu.agent.tools.identity import AddressBookTool
 from yitu.agent.tools.pricing import PricingRuleTool
 from yitu.agent.tools.shipments import ShipmentReadInput, ShipmentReadTool
 from yitu.agent.workflow.contracts import (
@@ -35,8 +35,6 @@ class AssistantReadService:
             )
         elif call.name == "list_addresses":
             result = await AddressBookTool().execute(self._context)
-        elif call.name == "get_current_identity":
-            result = await IdentityTool().execute(self._context)
         elif call.name == "get_pricing_rules":
             result = await PricingRuleTool().execute(self._context)
         else:

@@ -42,7 +42,6 @@ ASSISTANT_TOOL_SPECS: tuple[dict[str, object], ...] = (
     _function_tool(
         "list_addresses", "读取当前客户的最小化地址选项。", _EMPTY_PARAMETERS
     ),
-    _function_tool("get_current_identity", "读取当前登录身份摘要。", _EMPTY_PARAMETERS),
     _function_tool(
         "get_pricing_rules", "读取当前生效的确定性运费规则。", _EMPTY_PARAMETERS
     ),

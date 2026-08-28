@@ -1,0 +1,37 @@
+# 仅对“构建上下文为项目根目录”的镜像生效（当前即前端镜像 deploy/frontend.Dockerfile）。
+# 后端镜像构建上下文是 backend/，使用 backend 目录自身的忽略规则。
+
+# 版本控制与 IDE / 工具目录
+.git/
+.idea/
+.trae/
+.workbuddy/
+.superpowers/
+.reasonix/
+.pytest_cache/
+
+# 依赖与构建产物
+**/node_modules/
+frontend/dist/
+**/*.tsbuildinfo
+frontend/vite.log
+
+# Python 缓存与虚拟环境
+**/__pycache__/
+**/*.py[cod]
+backend/.venv/
+backend/.mypy_cache/
+backend/.ruff_cache/
+backend/.uv-cache/
+backend/.pytest_cache/
+backend/.coverage
+
+# 运行期数据与密钥
+backend/var/
+**/.env
+**/.env.*
+!**/.env.example
+
+# 文档与杂项（前端构建不需要）
+docs/
+*.md

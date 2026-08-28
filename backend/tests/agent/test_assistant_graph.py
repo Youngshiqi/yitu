@@ -13,7 +13,7 @@ from tests.agent.fakes import (
     FakeTrace,
     ScriptedModel,
 )
-from yitu.agent.model_adapter import ToolCall, ToolCallResult
+from yitu.agent.infrastructure.model_adapter import ToolCall, ToolCallResult
 from yitu.agent.runtime.graph_context import AgentRuntimeContext
 from yitu.agent.workflow.assistant_graph import build_assistant_graph
 from yitu.agent.workflow.state import (
@@ -70,11 +70,8 @@ async def test_assistant_graph_observes_tool_result_before_answer() -> None:
                     ),
                 ),
             ),
-            ToolCallResult(
-                content="根据已发布规则，充电宝不能按普通物品寄递。",
-                tool_calls=(),
-            ),
-        ]
+        ],
+        stream_responses=["根据已发布规则，充电宝不能按普通物品寄递。"],
     )
     context = _context(model)
     graph = build_assistant_graph()

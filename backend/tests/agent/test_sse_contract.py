@@ -3,8 +3,8 @@
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from yitu.agent.schemas import AgentTurnView, MessageView
-from yitu.agent.sse import encode_agent_event
+from yitu.agent.api.schemas import AgentTurnView, MessageView
+from yitu.agent.api.sse import encode_agent_event
 
 
 def test_agent_sse_contract_keeps_public_delta_shape() -> None:

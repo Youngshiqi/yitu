@@ -1,5 +1,15 @@
 .worktrees/
 .env
+.env.*
+!.env.example
+!.env.*.example
+deploy/.env.production
+
+# IDE / 个人工具配置（开源前不应入库）
+.idea/
+.trae/
+.CLAUDE
+
 __pycache__/
 *.py[cod]
 backend/.mypy_cache/
