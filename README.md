@@ -21,10 +21,10 @@
 
 大多数「AI + 业务」项目止步于「能对话」。驿途把 AI 深度嵌进真实物流履约链路，几个值得看的工程点：
 
-- **🧠 LangGraph 双层 Agent 编排**：主图（会话 / 检索 / 路由决策）+ 寄件子图（信息收集 → 计价 → 授权 → 建单），用端口-适配器架构隔离 LLM 与业务，确定性规则（计价 / 授权 / 建单）在适配层裁决，LangGraph 只负责控制流。
-- **🔐 HITL 授权令牌（不是普通确认按钮）**：敏感动作走 **持久化授权令牌**（状态 `已创建→已授权/已拒绝/已过期`，幂等 TTL、可审计），AI 拿到令牌才提交建单，杜绝「模型说能下单就下单」。
+- **🧠 LangGraph 单图 Agent 编排**：会话、检索路由、寄件事务全部收敛在**一张状态图**里——仅 `assistant_agent_node ↔ assistant_tools_node` 构成 ReAct 循环（模型调用白名单只读工具），寄件则是一连串**确定性事务节点**（信息处理 → 计价 → 确认 → 建单），由条件边在同图内跳转，不做子图、不开第二个 Agent 循环。代码按 `workflow`（图/节点/路由）/ `capabilities`（确定性业务服务）/ `infrastructure`（LLM、RAG 等外部能力）/ `runtime`（图运行与依赖注入）分层：计价 / 建单等写操作全部落在确定性服务层，LangGraph 只负责控制流，LLM 永远不直接写库。
+- **🔐 原生 HITL 人工确认（不是「模型说了算」）**：下单等敏感动作走 LangGraph 原生 `interrupt()` 暂停图执行、向前端推送确认卡片；用户确认 / 取消后以 `Command(resume={"decision": ...})` 恢复，中断状态由 **Postgres checkpointer 持久化**，跨请求、跨进程都能恢复——模型必须等到明确授权才提交建单，写操作完全由确定性节点掌控。
 - **🚚 状态机驱动的真实履约**：订单 / 运单 / 包裹 / 路由 / 取件码 / 异常件全链路状态流转，非法迁移直接拒绝；AI 建的单和人工建的单走**同一套**履约引擎。
-- **📚 双路 RAG 混合检索**：知识库按「业务规则 / SOP / 区域政策」类型分域，向量召回 + 关键词召回 + RRF 融合 + Rerank 精排，命中策略可观测、可评测。
+- **📚 混合检索 RAG + 专用精排**：知识库按「业务规则 / SOP / 区域政策」类型分域，关键词与向量**双路召回 → 归一化加权融合**，再用 cross-encoder 精排模型（如 gte-rerank）重排；精排失败自动回退融合排序，检索质量可通过评测脚本量化（含 MRR 指标）。
 - **🛡️ 生产级可靠性**：Celery 异步任务 + Redis 队列、Outbox 事件可靠投递、死信队列与重放、幂等计费、审计日志、全链路追踪。
 - **💬 流式 SSE 交互**：AI 回复逐字流式输出，思考过程、工具调用、确认卡片实时推送。
 
@@ -34,7 +34,7 @@
 
 | 层 | 技术 |
 |----|------|
-| **Agent 编排** | LangGraph 0.4+（双层 ReAct 图、`interrupt()` 原生 HITL、Postgres checkpointer） |
+| **Agent 编排** | LangGraph 0.4+（单状态图 + 单 ReAct 循环、确定性寄件事务节点、`interrupt()` 原生 HITL、Postgres checkpointer） |
 | **后端框架** | FastAPI 0.115+、Pydantic v2、SQLAlchemy 2.0（async）、Alembic |
 | **异步任务** | Celery 5.4 + Redis（PDF 解析、嵌入、事件消费，含 beat 定时） |
 | **数据存储** | PostgreSQL 16 + **pgvector**（向量库）、Redis 7、MinIO / S3（对象存储） |
@@ -104,7 +104,7 @@ npm run dev
 - **演示账号**：`demo` / `YituDemo2026!`（管理员角色，可上传知识库 PDF、查看全量运单）
 - 试试对话下单：
   - 「帮我寄一个 2 公斤的文件到北京朝阳，明天上午能到吗？」
-  - AI 会收集信息 → 报价 → 推送**确认卡片** → 你点确认（授权令牌）→ 真实建单并返回运单号
+  - AI 会收集信息 → 报价 → 推送**确认卡片** → 你点确认（图从中断点恢复）→ 真实建单并返回运单号
 - 用运单号查轨迹、发起取消 / 改派 / 售后，观察状态机约束。
 
 ---
@@ -115,11 +115,13 @@ npm run dev
 yitu/
 ├── backend/
 │   ├── src/yitu/
-│   │   ├── agent/            # LangGraph 双层图、节点、状态、端口/适配器、工具
-│   │   │   ├── workflow/     # 主图 + 寄件子图定义、路由、状态契约
-│   │   │   ├── ports/        # 端口协议（Model/Knowledge/Workflow/...）
-│   │   │   ├── adapters/     # 适配器实现（LLM、RAG、工作流裁决）
-│   │   │   └── tools/        # Agent 可调用工具（计价、草稿、身份、知识）
+│   │   ├── agent/            # Agent 全部代码
+│   │   │   ├── workflow/     # 单张状态图定义、条件路由、状态契约
+│   │   │   │   └── nodes/    # 上下文 / Agent ReAct / 寄件事务 / 收尾 各节点
+│   │   │   ├── capabilities/ # 节点调用的确定性业务服务（计价、建单、知识检索、会话读取）
+│   │   │   ├── runtime/      # 依赖注入、图运行器、interrupt 恢复、SSE 事件映射
+│   │   │   ├── infrastructure/ # LLM / Embedding / RAG 等外部能力实现
+│   │   │   └── tools/ domain/ prompts/ api/  # 白名单只读工具、领域模型、提示词、路由
 │   │   ├── shipments/        # 运单 / 包裹 / 取件码 / 末次 Mile 凭证
 │   │   ├── pricing/ labels/ dispatch/ tracking/ sla/   # 计价、标签、路由、轨迹、SLA
 │   │   ├── payments/ returns/ stations/ regions/ addresses/
@@ -145,7 +147,7 @@ yitu/
 | 文档 | 内容 |
 |------|------|
 | [技术亮点](docs/technical-highlights.md) | 核心技术卖点与工程决策梳理 |
-| [LangGraph 流程](docs/langgraph-flow.md) | 双层 Agent 图的节点、边与中断恢复 |
+| [LangGraph 流程](docs/langgraph-flow.md) | 单张 Agent 状态图的 10 个节点、条件边与中断恢复 |
 | [RAG 架构](docs/agent-rag-architecture.md) / [知识库 RAG](docs/knowledge-rag.md) | 双路混合检索、重排、评测设计 |
 | [业务规则](docs/business/README.md) | [计价规则](docs/business/pricing-rules.md) · [SLA 规则](docs/business/sla-rules.md) |
 | [产品需求](docs/prd/yitu-smart-logistics-prd.md) | 完整 PRD |

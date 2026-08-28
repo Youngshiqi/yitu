@@ -67,7 +67,7 @@ README 里写了 demo 账号密码 `YituDemo2026!`。开源保留没问题（本
 
 当前 README 只有本地运行说明。开源版建议补充：
 
-- 一句话简介 + 2~3 个**卖点 bullet**（AI 对话下单、状态机履约约束、RAG 混合检索、HITL 授权令牌）；
+- 一句话简介 + 2~3 个**卖点 bullet**（AI 对话下单、状态机履约约束、RAG 混合检索、LangGraph interrupt 人工确认）；
 - 架构图 / 截图（GIF 演示 AI 下单效果最佳）；
 - 技术栈表格（FastAPI / LangGraph / PostgreSQL+pgvector / Celery / Vue3 / Element Plus）；
 - 「快速开始」（3 条命令跑起来）；
@@ -91,7 +91,7 @@ gh auth login
 
 # 2. 在项目根目录，创建并推送（public 开源）
 gh repo create yitu-logistics --public --source=. --remote=origin --push \
-  --description "有真实履约约束的 AI 智能物流平台：LangGraph 双层编排 + 状态机 + RAG + HITL"
+  --description "有真实履约约束的 AI 智能物流平台：LangGraph 单图编排 + 状态机 + RAG + interrupt 人工确认"
 ```
 
 ### 方式二：网页建仓 + 命令行推送
@@ -128,7 +128,7 @@ git ls-files | grep -E "\.env$"   # 必须为空
 
 ## A5. 作品集项目的曝光建议（可选）
 
-这个项目技术含量很高（LangGraph 双层图、HITL 授权令牌、双路 RAG、Outbox/死信），非常适合作为简历项目。建议：
+这个项目技术含量很高（LangGraph 单图编排 + interrupt 人工确认、状态机履约、双路 RAG、异步任务与通知可靠性），非常适合作为简历项目。建议：
 
 1. README 顶部放一段 **30 秒演示 GIF**（AI 对话下单 → 确认卡片 → 建单 → 轨迹）；
 2. 把 `overview.md` 公开为 `docs/architecture-deep-dive.md`（深度技术讲解，面试可直接讲）；
@@ -285,7 +285,7 @@ docker compose -f deploy/docker-compose.prod.yml exec db \
 
 1. **托管数据库**：把 PostgreSQL/Redis 换成云厂商 RDS / 云数据库（自动备份、主从、高可用），应用连外部地址即可；
 2. **对象存储**：已用腾讯云 COS，无需自建 MinIO；
-3. **容器编排**：把 `api`/`worker` 做成镜像推到镜像仓库（腾讯云 TCR / 阿里云 ACR），用 **Kubernetes** 或云容器服务部署，`api` 可水平多副本（注意：多副本时 `YITU_AGENT_CHECKPOINTER_BACKEND=postgres` 已强制，草稿子图状态走 PG 共享，无状态副本可安全扩缩）；
+3. **容器编排**：把 `api`/`worker` 做成镜像推到镜像仓库（腾讯云 TCR / 阿里云 ACR），用 **Kubernetes** 或云容器服务部署，`api` 可水平多副本（注意：多副本时 `YITU_AGENT_CHECKPOINTER_BACKEND=postgres` 已强制，图中断点 / 会话状态走 PG 共享，无状态副本可安全扩缩）；
 4. **CI/CD**：GitHub Actions 推镜像 → 服务器 `docker compose pull && up -d`，或接云厂商自动部署；
 5. **静态前端**：`frontend/dist/` 可直接传到 **腾讯云 COS 静态网站 + CDN**，只把 `/api` 反代到后端，更省服务器资源。
 
