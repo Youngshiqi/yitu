@@ -20,7 +20,7 @@ from uuid import UUID
 
 from sqlalchemy import delete, select, update
 from yitu.addresses.models import Address
-from yitu.agent.models import AgentShipmentDraft
+from yitu.agent.domain.models import AgentShipmentDraft
 from yitu.identity.models import User  # noqa: F401 注册 mapper 依赖
 from yitu.platform.database import SessionFactory, dispose_database
 from yitu.pricing.models import QuoteSnapshot  # noqa: F401 注册 mapper 依赖

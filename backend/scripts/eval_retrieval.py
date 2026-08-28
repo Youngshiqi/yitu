@@ -26,7 +26,7 @@ async def collect_results(enhanced: bool) -> tuple[list[list[str]], list[tuple[s
     """返回每个用例的检索内容列表与首个命中排名（供逐条展示）。"""
     rewriter = reranker = None
     if enhanced:
-        from yitu.agent.rag_enhancements import build_rag_enhancements
+        from yitu.agent.infrastructure.rag_enhancements import build_rag_enhancements
 
         rewriter, reranker = build_rag_enhancements()
         if rewriter is None:

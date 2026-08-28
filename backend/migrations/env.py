@@ -7,7 +7,7 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from yitu.addresses import models as _address_models  # noqa: F401
-from yitu.agent import models as _agent_models  # noqa: F401
+from yitu.agent.domain import models as _agent_models  # noqa: F401
 from yitu.dispatch import models as _dispatch_models  # noqa: F401
 from yitu.exceptions import models as _exception_models  # noqa: F401
 from yitu.identity import models as _identity_models  # noqa: F401
