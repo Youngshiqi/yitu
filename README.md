@@ -17,6 +17,29 @@
 
 ---
 
+## 🔗 在线演示
+
+> **一键体验地址：[http://47.98.49.159/](http://47.98.49.159/)**
+>
+> 已用 Docker Compose 部署在阿里云 ECS（Ubuntu 22.04），前端 Nginx + FastAPI（uvicorn 多 worker）+ Celery + PostgreSQL/pgvector + Redis 全容器化运行。
+
+打开后进入 **「演示登录」** 标签页，选择身份即可登录，演示环境统一密码：
+
+```
+YituDemo2026!
+```
+
+| 身份 | 账号 | 看点 |
+|------|------|------|
+| 客户 | `customer.demo` | **AI 对话下单 → 确认卡片（HITL）→ 建单 → 轨迹** 全链路 |
+| 快递员 | `courier.bijing.demo` / `courier.shanghai.demo` | 取件、派送、状态流转 |
+| 网点操作员 | `operator.beijing.demo` / `operator.shanghai.demo` | 网点作业、路由 |
+| 运营管理员 | `operations.demo` | 全局视角、知识库管理 |
+
+> 推荐面试演示路径：用「客户」身份，在对话里直接说「我要从北京寄一个 3 公斤的包裹到上海」，观察 AI 自动解析地址/计价 → 推送确认卡片 → 确认后真实建单，再切到快递员/网点身份看同一张单如何被履约引擎驱动。
+
+---
+
 ## ✨ 项目亮点
 
 大多数「AI + 业务」项目止步于「能对话」。驿途把 AI 深度嵌进真实物流履约链路，几个值得看的工程点：
@@ -54,8 +77,8 @@
 ### 1. 克隆并配置环境变量
 
 ```bash
-git clone https://github.com/<your-name>/yitu-logistics.git
-cd yitu-logistics
+git clone https://github.com/Youngshiqi/yitu.git
+cd yitu
 cp .env.example .env
 ```
 
