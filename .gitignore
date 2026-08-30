@@ -46,3 +46,13 @@ venv/
 # ---- 系统文件 ----
 .DS_Store
 Thumbs.db
+
+# ---- 设计/博客/面试文档（本地保留，不推 GitHub） ----
+docs/agent-rag-architecture.md
+docs/architecture-deep-dive.md
+docs/csdn-blog-post.md
+docs/interview-script.md
+docs/knowledge-rag.md
+docs/langgraph-flow.md
+docs/open-source-and-deployment.md
+docs/technical-highlights.md
